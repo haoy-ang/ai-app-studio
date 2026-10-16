@@ -1,0 +1,25 @@
+graph TD
+    U["浏览器 SPA<br/>Vue 3 · TypeScript · Vite · Pinia · Ant Design Vue"]
+    C["Controller 层<br/>参数校验 · AOP 鉴权 · 分布式限流"]
+    S["Service 层<br/>应用 / 用户 / 对话历史"]
+    M["LangChain4j + DeepSeek<br/>流式输出 · 结构化输出"]
+    W["LangGraph4j 工作流<br/>素材收集 → 提示词增强 → 类型路由 → 代码生成 → 质量校验 → 工程构建"]
+    T["AI 工具集<br/>文件读写 · 图片搜索 · 架构图生成"]
+    DB[("MySQL<br/>用户 / 应用 / 对话历史")]
+    RD[("Redis<br/>会话 · 缓存 · 对话记忆 · 限流")]
+    COS["腾讯云 COS<br/>应用封面 · 部署产物"]
+    SH["Selenium<br/>网页截图"]
+    NG["Nginx<br/>deployKey 静态托管"]
+
+    U -->|"HTTP / SSE 流式"| C
+    C --> S
+    S --> M
+    S --> W
+    S --> DB
+    S --> RD
+    S --> COS
+    S --> SH
+    S --> NG
+    M --> T
+    W --> T
+    NG -->|"生成应用的访问入口"| U

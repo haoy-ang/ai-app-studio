@@ -1,0 +1,100 @@
+# ============================================================
+# 本地开发配置模板
+#
+# 用法：复制本文件为 application-local.yml，填入你自己的密钥。
+# 真正的 application-local.yml 已写入 .gitignore，不会被提交到仓库。
+#
+#   cp application-local.example.yml application-local.yml
+#
+# ============================================================
+
+# ==================== AI 模型 ====================
+langchain4j:
+  open-ai:
+    # 非流式对话模型：负责结构化输出（HtmlCodeResult / MultiFileCodeResult）
+    chat-model:
+      # 复用下面 streaming 的密钥，避免两处重复维护
+      api-key: ${langchain4j.open-ai.streaming-chat-model.api-key}
+      base-url: https://api.deepseek.com
+      model-name: deepseek-chat
+      log-requests: true
+      log-responses: true
+      max-tokens: 32768
+      # 结构化输出必须靠这两个约束才能稳定拿到 JSON
+      strict-json-schema: true
+      response-format: json_object
+      # 调用失败自动重试次数（只给非流式模型配，streaming builder 没有该方法）
+      max-retries: 3
+
+    # 智能路由专用模型：只做「HTML / 多文件 / Vue 三选一」的分类
+    # 用 qwen-turbo 比 deepseek-chat 便宜一个数量级，走阿里云百炼的 OpenAI 兼容层。
+    # 留空不影响启动：工厂会打印 warn 并降级用 DeepSeek 路由，填好后自动切换。
+    routing-chat-model:
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api-key: <在此填入你的阿里云百炼 API Key>
+      model-name: qwen-turbo
+      max-tokens: 100
+
+    # 流式对话模型：SSE 打字机效果走这个
+    # 必须用 deepseek-chat（v4-flash 的非思考模式），且绝对不能加 response-format
+    streaming-chat-model:
+      api-key: <在此填入你的 DeepSeek API Key>
+      base-url: https://api.deepseek.com
+      model-name: deepseek-chat
+      log-requests: true
+      log-responses: true
+      max-tokens: 32768
+      temperature: 0.7
+
+# ==================== 对象存储（存放应用封面截图）====================
+cos:
+  client:
+    host: https://<你的-bucket>.cos.<地域>.myqcloud.com
+    secretId: <在此填入你的 SecretId>
+    secretKey: <在此填入你的 SecretKey>
+    region: <地域，例如 ap-chongqing>
+    bucket: <你的 bucket 名称>
+
+# ==================== AI 工作流的图片素材搜索 ====================
+# 图源降级链：配置了 key 的图源 → Wikimedia Commons（免 key） → Picsum（免 key）
+# 即零配置也能跑通，不会出现裂图
+image-search:
+  provider: auto
+  search-count: 12
+
+pexels:
+  # Pexels 已暂停发放新 API key，留空即自动跳过
+  api-key:
+
+pixabay:
+  # 需要时去 pixabay.com 注册，key 在 pixabay.com/api/docs 直接可见
+  api-key:
+
+# ==================== 接口限流（Redisson 令牌桶）====================
+ratelimit:
+  # 联调期建议 false：本机所有请求 IP 都是 127.0.0.1，会共用一把令牌桶，
+  # 连跑几次 AI 生成就会把自己限流。验证限流效果时改成 true。
+  enabled: false
+
+# ==================== Prompt 安全审查（输入护轨）====================
+prompt-guardrail:
+  max-length: 1000
+  # 敏感词（命中即拒绝）。中英混排容易误伤，按需增删
+  sensitive-words:
+    - 忽略之前的指令
+    - ignore previous instructions
+    - ignore above
+    - 破解
+    - hack
+    - 绕过
+    - bypass
+    - 越狱
+    - jailbreak
+
+# ==================== 架构图渲染（Mermaid → 图片）====================
+# MermaidDiagramTool 默认走 mermaid.ink 在线渲染，零配置可用（ink-fallback / timeout-seconds 均有默认值）。
+# 若想改用本地 mermaid-cli（离线、更快），自行 npm 安装后按下面三项填写：
+# mermaid:
+#   work-dir: <执行 mmdc 时的工作目录>
+#   mmdc-command: <mmdc 路径，如 node ./node_modules/@mermaid-js/mermaid-cli/src/cli.js>
+#   puppeteer-config: <puppeteer 配置文件路径，可省略>
