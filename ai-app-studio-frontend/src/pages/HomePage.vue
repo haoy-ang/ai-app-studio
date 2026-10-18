@@ -1,18 +1,12 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { message, Modal } from 'ant-design-vue'
+import { message } from 'ant-design-vue'
 import { ArrowUpOutlined } from '@ant-design/icons-vue'
 import { useLoginUserStore } from '@/stores/loginUser'
-import {
-  addApp,
-  listMyAppVoByPage,
-  listGoodAppVoByPage,
-  deployApp,
-  deleteApp,
-} from '@/api/appController'
-import { getDeployUrl, API_BASE_URL } from '@/config/env'
+import { addApp, listMyAppVoByPage, listGoodAppVoByPage } from '@/api/appController'
 import { CODE_GEN_TYPE_OPTIONS } from '@/utils/codeGenTypes'
+import { useAppActions } from '@/composables/useAppActions'
 import AppCard from '@/components/AppCard.vue'
 import AppVersionDrawer from '@/components/AppVersionDrawer.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -168,101 +162,22 @@ const loadFeaturedApps = async () => {
 }
 
 // 查看对话
-const viewChat = (appId: string | number | undefined) => {
+const viewChat = (appId: API.SnowflakeId | undefined) => {
   if (appId) {
     router.push(`/app/chat/${appId}`)
   }
 }
 
-// 查看作品
-const viewWork = (app: API.AppVO) => {
-  if (app.deployKey) {
-    const url = getDeployUrl(app.deployKey)
-    window.open(url, '_blank')
-  }
-}
-
 // ==================== 作品管理 ====================
-
-// 版本历史抽屉
-const versionOpen = ref(false)
-const versionApp = ref<API.AppVO | null>(null)
-
-// 重命名：复用已有的编辑页（它只改应用名称）
-const handleEditApp = (app: API.AppVO) => {
-  if (app.id) {
-    router.push(`/app/edit/${app.id}`)
-  }
-}
-
-const handleDownloadApp = (app: API.AppVO) => {
-  if (!app.id) {
-    return
-  }
-  // 走浏览器原生下载，不走 request 封装：zip 是二进制，
-  // umi-request 会当成 JSON/text 解析，下载下来是个打不开的坏包
-  window.open(`${API_BASE_URL}/app/download/${app.id}`, '_blank')
-}
-
-// 部署可能要几分钟（Vue 项目要 npm install + build），所以给一个不会自动消失的 loading
-const handleDeployApp = async (app: API.AppVO) => {
-  if (!app.id) {
-    return
-  }
-  const hide = message.loading('部署中，Vue 工程需要构建，可能要几分钟…', 0)
-  try {
-    // appId 是雪花 id，直接透传字符串：Number() 会丢精度，后端会报「应用不存在」
-    const res = await deployApp({ appId: app.id })
-    if (res.data.code === 0) {
-      message.success('部署成功')
-      // 部署成功会写入 deployKey，卡片上的「查看作品」要跟着出现
-      await loadMyApps()
-    } else {
-      message.error('部署失败：' + (res.data.message || '未知错误'))
-    }
-  } catch (error) {
-    console.error('部署失败：', error)
-    message.error('部署失败')
-  } finally {
-    hide()
-  }
-}
-
-const handleDeleteApp = (app: API.AppVO) => {
-  if (!app.id) {
-    return
-  }
-  Modal.confirm({
-    title: `删除「${app.appName || '未命名应用'}」？`,
-    // 把「会连坐什么」说清楚：这是不可逆操作，用户有权知道删掉了哪些东西
-    content: '对话记录、版本快照、已部署的线上页面都会一起删除，且无法恢复。',
-    okText: '删除',
-    okType: 'danger',
-    cancelText: '取消',
-    onOk: async () => {
-      try {
-        // id 原样透传（雪花 id，不能 Number）
-        const res = await deleteApp({ id: app.id })
-        // code === 0 只代表"请求处理完了"，data 才是"真的删掉了没有"
-        if (res.data.code === 0 && res.data.data) {
-          message.success('已删除')
-          // 自己的作品也可能在精选位（后端已同步清掉缓存），列表要一起刷
-          await Promise.all([loadMyApps(), loadFeaturedApps()])
-        } else {
-          message.error('删除失败：' + (res.data.message || '后端未删除任何记录'))
-        }
-      } catch (error) {
-        console.error('删除应用失败：', error)
-        message.error('删除失败')
-      }
+// 重命名 / 查看作品 / 下载 / 部署 / 删除 / 版本历史 这一整套动作与 /my/apps 管理页共用，
+// 实现放在 composables/useAppActions.ts —— 复制两份的话，改判定条件迟早会漏掉一处。
+const { versionOpen, versionApp, editApp, viewWork, downloadApp, deploy, remove, openVersions } =
+  useAppActions({
+    // 自己的作品也可能在精选位（后端删应用时已同步清缓存），两个列表一起刷
+    onChanged: async () => {
+      await Promise.all([loadMyApps(), loadFeaturedApps()])
     },
   })
-}
-
-const handleOpenVersions = (app: API.AppVO) => {
-  versionApp.value = app
-  versionOpen.value = true
-}
 
 // 页面加载时获取数据
 onMounted(() => {
@@ -323,9 +238,15 @@ onMounted(() => {
       </div>
     </section>
 
-    <!-- 我的作品 -->
+    <!-- 我的作品：这里只做「最近 6 个」的预览，作品多了去 /my/apps 管理 -->
     <section class="section">
-      <h2 class="section-title">我的作品</h2>
+      <div class="section-head">
+        <h2 class="section-title">我的作品</h2>
+        <RouterLink v-if="myAppsPage.total > 0" to="/my/apps" class="section-more">
+          查看全部
+          <span class="more-arrow" aria-hidden="true">→</span>
+        </RouterLink>
+      </div>
       <div v-if="myApps.length" class="app-grid">
         <AppCard
           v-for="app in myApps"
@@ -334,11 +255,11 @@ onMounted(() => {
           owned
           @view-chat="viewChat"
           @view-work="viewWork"
-          @edit="handleEditApp"
-          @download="handleDownloadApp"
-          @deploy="handleDeployApp"
-          @version="handleOpenVersions"
-          @delete="handleDeleteApp"
+          @edit="editApp"
+          @download="downloadApp"
+          @deploy="deploy"
+          @version="openVersions"
+          @delete="remove"
         />
       </div>
       <EmptyState
@@ -630,6 +551,42 @@ onMounted(() => {
   height: 16px;
   border-radius: 2px;
   background: var(--brand);
+}
+
+/* 标题 + 右侧「查看全部」：标题自带下边距，放进 flex 行里要清掉，避免双重间距 */
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-5);
+}
+
+.section-head .section-title {
+  margin-bottom: 0;
+}
+
+.section-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  text-decoration: none;
+  transition: color var(--dur) var(--ease);
+}
+
+.section-more:hover {
+  color: var(--brand);
+}
+
+/* 箭头在 hover 时右移一格：成本最低的「可以点」暗示 */
+.more-arrow {
+  transition: transform var(--dur) var(--ease);
+}
+
+.section-more:hover .more-arrow {
+  transform: translateX(2px);
 }
 
 .app-grid {

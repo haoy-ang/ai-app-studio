@@ -85,7 +85,8 @@ interface Props {
 }
 
 interface Emits {
-  (e: 'view-chat', appId: string | number | undefined): void
+  // appId 是雪花 id（字符串），不是 number
+  (e: 'view-chat', appId: API.SnowflakeId | undefined): void
   (e: 'view-work', app: API.AppVO): void
   (e: 'edit', app: API.AppVO): void
   (e: 'download', app: API.AppVO): void

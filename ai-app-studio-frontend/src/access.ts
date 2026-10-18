@@ -39,5 +39,13 @@ router.beforeEach(async (to, from, next) => {
       return
     }
   }
+  // 「我的作品」同理：列表接口按登录态取 userId，没登录只会拿到空数组 + 报错
+  if (toUrl.startsWith('/my')) {
+    if (!loginUser || !loginUser.id) {
+      message.warning('请先登录')
+      next(`/user/login?redirect=${to.fullPath}`)
+      return
+    }
+  }
   next()
 })

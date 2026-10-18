@@ -97,6 +97,11 @@ const originItems = [
     title: '主页',
   },
   {
+    key: '/my/apps',
+    label: '我的作品',
+    title: '我的作品',
+  },
+  {
     key: '/admin/userManage',
     label: '用户管理',
     title: '用户管理',
@@ -108,13 +113,22 @@ const originItems = [
   },
 ]
 
-// 过滤菜单项：/admin 下的入口仅管理员可见
+/**
+ * 过滤菜单项：
+ * - /admin 下的入口仅管理员可见
+ * - /my 下的入口仅登录用户可见（未登录点进去只会被守卫弹回登录页，不如不显示）
+ */
 const filterMenus = (menus = [] as MenuProps['items']) => {
   return menus?.filter((menu) => {
     const menuKey = menu?.key as string
+    const loginUser = loginUserStore.loginUser
     if (menuKey?.startsWith('/admin')) {
-      const loginUser = loginUserStore.loginUser
       if (!loginUser || loginUser.userRole !== 'admin') {
+        return false
+      }
+    }
+    if (menuKey?.startsWith('/my')) {
+      if (!loginUser || !loginUser.id) {
         return false
       }
     }
