@@ -125,4 +125,16 @@ npm run dev
 - **应用部署产物**输出到 `app.deploy.root-dir`（默认 `E:/ai-app-studio-data/deploy`，在项目目录之外）。
   ⚠️ 它必须与 Nginx 配置里的 `root` **完全一致**，否则访问部署地址会 404 ——
   放在项目外正是为了让项目目录改名/移动时不影响部署。可用环境变量 `APP_DEPLOY_ROOT_DIR` 覆盖。
+- **本地必须先起 Nginx**，否则「部署」看起来成功、实际打不开，封面截图也会失败：
+
+  ```bat
+  cd /d D:\nginx\nginx-1.30.5
+  nginx.exe
+  ```
+
+  Nginx 监听 `8080`（`app.deploy.host` 默认 `http://localhost:8080`），`root` 指向上面的部署目录。
+  ⚠️ **一定要先 `cd` 到 Nginx 目录再执行**（或用 `nginx.exe -p <dir> -c conf/nginx.conf`）——
+  Windows 版 Nginx 是按**当前工作目录**去找 `conf/` 的，在项目目录里直接调用会报
+  `CreateFile() ".../ai-app-studio/conf/nginx.conf" failed`。
+  停止用 `nginx.exe -s stop`；改完配置先 `nginx.exe -t` 验语法。
 - 前端接口类型通过 `npm run openapi2ts` 从后端 Swagger 文档自动生成，保持前后端契约一致
