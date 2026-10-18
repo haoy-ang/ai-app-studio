@@ -21,6 +21,7 @@ import com.mybatisflex.core.paginate.Page;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.BeanUtils;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -101,16 +102,28 @@ public class UserController {
 
     /**
      * 删除用户（仅管理员）
+     * <p>
+     * 不是简单删一行：该用户名下的应用、对话历史、版本快照、部署产物都会一起删除。
+     * 具体保护（不能删自己 / 必须留一个管理员 / 释放账号）见
+     * {@link UserService#removeUser(Long, Long)}。
+     * <p>
+     * ⚠️ {@code @CacheEvict}：精选列表的 AppVO 里嵌了作者信息，删掉用户后
+     * 他的应用也不在了，但缓存最长会残留 5 分钟（点进去是已删除的数据）。
      *
      * @param deleteRequest 删除请求
+     * @param request       请求（用于取当前操作人）
      * @return 删除结果
      */
     @PostMapping("/delete")
     @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
-    public BaseResponse<Boolean> deleteUser(@RequestBody DeleteRequest deleteRequest) {
-        ThrowUtils.throwIf(deleteRequest == null || deleteRequest.getId() <= 0, ErrorCode.PARAMS_ERROR);
-        boolean b = userService.removeById(deleteRequest.getId());
-        return ResultUtils.success(b);
+    @CacheEvict(value = "good_app_page", allEntries = true)
+    public BaseResponse<Boolean> deleteUser(@RequestBody DeleteRequest deleteRequest, HttpServletRequest request) {
+        // 先判 null 再判 <= 0：id 是 Long，直接拆箱遇到 null 会 NPE，变成 500 而不是「参数错误」
+        ThrowUtils.throwIf(deleteRequest == null || deleteRequest.getId() == null || deleteRequest.getId() <= 0,
+                ErrorCode.PARAMS_ERROR, "用户 ID 无效");
+        User loginUser = userService.getLoginUser(request);
+        boolean result = userService.removeUser(deleteRequest.getId(), loginUser.getId());
+        return ResultUtils.success(result);
     }
 
     /**

@@ -124,4 +124,26 @@ public interface UserService extends IService<User> {
      * @return 查询参数
      */
     QueryWrapper getQueryWrapper(UserQueryRequest userQueryRequest);
+
+    /**
+     * 删除用户，并级联清理该用户名下的所有数据（仅管理员）
+     * <p>
+     * <b>为什么不直接调 {@code removeById}：</b>用户不是一张孤立的表 ——
+     * 他的应用、应用下的对话历史、版本快照、<b>磁盘上的部署产物</b>都以 userId / appId 为线索挂着。
+     * 只删 user 行会留下一堆谁都管不到的孤儿数据，而且已部署的页面还能被外网访问。
+     * <p>
+     * 三条保护（都是「删完就救不回来」的场景）：
+     * <ol>
+     *   <li>不能删自己：管理员把自己删掉会立刻失去后台入口，且没有第二个账号能救；</li>
+     *   <li>系统至少保留一个管理员：删掉最后一个 admin，后台就永久锁死了；</li>
+     *   <li>账号会被释放（改写成 {@code 原账号#deleted#<id>}）：
+     *       逻辑删除行还在表里，而 {@code uk_userAccount} 是唯一索引，
+     *       不释放的话这个账号永远注册不回来。</li>
+     * </ol>
+     *
+     * @param userId     要删除的用户 id
+     * @param operatorId 操作人（当前登录的管理员）id
+     * @return 是否删除成功
+     */
+    boolean removeUser(Long userId, Long operatorId);
 }

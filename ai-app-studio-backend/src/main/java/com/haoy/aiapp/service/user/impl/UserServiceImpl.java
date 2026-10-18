@@ -3,6 +3,7 @@ package com.haoy.aiapp.service.user.impl;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.BCrypt;
+import com.haoy.aiapp.constant.UserConstant;
 import com.haoy.aiapp.exception.BusinessException;
 import com.haoy.aiapp.exception.ErrorCode;
 import com.haoy.aiapp.exception.ThrowUtils;
@@ -10,11 +11,14 @@ import com.haoy.aiapp.manager.CosManager;
 import com.haoy.aiapp.mapper.user.UserMapper;
 import com.haoy.aiapp.model.dto.user.UserProfileUpdateRequest;
 import com.haoy.aiapp.model.dto.user.UserQueryRequest;
+import com.haoy.aiapp.model.entity.App;
 import com.haoy.aiapp.model.entity.User;
 import com.haoy.aiapp.model.enums.UserRoleEnum;
 import com.haoy.aiapp.model.vo.user.AppUserVO;
 import com.haoy.aiapp.model.vo.user.LoginUserVO;
 import com.haoy.aiapp.model.vo.user.UserVO;
+import com.haoy.aiapp.service.app.AppService;
+import com.haoy.aiapp.service.chathistory.ChatHistoryService;
 import com.haoy.aiapp.service.user.UserService;
 import com.haoy.aiapp.utils.SortFieldValidator;
 import com.mybatisflex.core.query.QueryWrapper;
@@ -23,7 +27,9 @@ import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -63,6 +69,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     private static final int USER_AVATAR_MAX_LENGTH = 512;
 
     /**
+     * 账号列长度上限（与表结构 userAccount varchar(256) 对齐）
+     */
+    private static final int USER_ACCOUNT_MAX_LENGTH = 256;
+
+    /**
      * 头像文件体积上限：2MB（比 yml 里的 5MB 更严，图标类图片没必要更大）
      */
     private static final long AVATAR_MAX_SIZE = 2 * 1024 * 1024;
@@ -77,6 +88,18 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
     @Resource
     private CosManager cosManager;
+
+    /**
+     * 删除用户时要连带清掉他的应用，而 AppServiceImpl 又依赖本服务（查作者、查登录用户），
+     * 两边直接互相注入会形成循环依赖 → 用 @Lazy 让 Spring 注入延迟代理，启动时不再互相等待。
+     * （同样的处理见 {@code ChatHistoryServiceImpl#appService}）
+     */
+    @Resource
+    @Lazy
+    private AppService appService;
+
+    @Resource
+    private ChatHistoryService chatHistoryService;
 
     /**
      * 允许排序的字段白名单（防止前端传入任意 SQL 片段造成注入）
@@ -518,5 +541,85 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             queryWrapper.orderBy(safeSortField, "ascend".equals(sortOrder));
         }
         return queryWrapper;
+    }
+
+    /**
+     * 删除用户并级联清理其名下数据
+     * <p>
+     * 顺序是「先把依赖数据删干净，最后删用户自己」：
+     * 反过来的话一旦中途失败（或事务没覆盖到磁盘操作），用户没了、应用还在，
+     * 那些应用就彻底没人能管——列表里查不到（查作者时用户已不存在），后台也定位不到归属人。
+     * <p>
+     * ⚠️ 磁盘上的部署产物、COS 封面、版本快照都不在事务里，只能靠「全部失败都吞掉」保证主流程走完。
+     * 顺序上仍然把「删应用」放在最前面：{@code AppService.removeById} 自己就是按
+     * 「对话 → 封面 → 部署目录 → 应用记录 → 版本」排的。
+     *
+     * @param userId     要删除的用户 id
+     * @param operatorId 操作人 id
+     * @return 是否删除成功
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean removeUser(Long userId, Long operatorId) {
+        ThrowUtils.throwIf(userId == null || userId <= 0, ErrorCode.PARAMS_ERROR, "用户 ID 无效");
+
+        User target = this.getById(userId);
+        ThrowUtils.throwIf(target == null, ErrorCode.NOT_FOUND_ERROR, "用户不存在或已被删除");
+
+        // 保护一：不能删自己。删掉就立刻失去后台入口，而这时候已经没有第二个账号能救回来
+        if (userId.equals(operatorId)) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "不能删除当前登录的账号");
+        }
+
+        // 保护二：系统必须保留至少一个管理员，否则后台永久锁死
+        if (UserConstant.ADMIN_ROLE.equals(target.getUserRole())
+                && this.count(QueryWrapper.create().eq("userRole", UserConstant.ADMIN_ROLE)) <= 1) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "系统至少要保留一个管理员");
+        }
+
+        // 1. 逐个删应用：对话历史 / COS 封面 / 部署目录 / 版本快照都在这里一起清掉
+        List<App> apps = appService.list(QueryWrapper.create().eq("userId", userId));
+        for (App app : apps) {
+            if (app.getId() != null && !appService.removeById(app.getId())) {
+                // 单个应用删失败不阻断整体：留着它比「用户删了一半」更容易收拾
+                log.warn("级联删除应用失败，跳过，appId: {}, userId: {}", app.getId(), userId);
+            }
+        }
+
+        // 2. 兜底清理：理论上应用删完对话就没了，但历史脏数据（应用已删、对话还在）得照顾到
+        chatHistoryService.remove(QueryWrapper.create().eq("userId", userId));
+
+        // 3. 释放账号：逻辑删除只把 isDelete 置 1，行还占着 uk_userAccount 唯一索引，
+        //    不释放的话这个账号永远注册不回来（用户看到的是「注册失败,数据库错误」，
+        //    而注册接口明明查不到重复账号，排查起来极其绕）
+        User releaseAccount = new User();
+        releaseAccount.setId(userId);
+        releaseAccount.setUserAccount(buildReleasedAccount(target));
+        this.updateById(releaseAccount);
+
+        // 4. 头像文件也从对象存储删掉（外部链接会被 deleteFileByUrl 自动跳过）
+        cleanupOldAvatar(target.getUserAvatar());
+
+        boolean removed = this.removeById(userId);
+        ThrowUtils.throwIf(!removed, ErrorCode.OPERATION_ERROR, "删除用户失败");
+        log.info("已删除用户并清理其名下数据，userId: {}, 应用数: {}, 操作人: {}", userId, apps.size(), operatorId);
+        return true;
+    }
+
+    /**
+     * 构造「已释放」的账号名
+     * <p>
+     * 形如 {@code zhangsan#deleted#469348007004553216}：既让唯一索引让开，
+     * 又能从库里直接看出原账号是什么、是谁被删了（排查数据问题时不用翻日志）。
+     *
+     * @param user 被删除的用户
+     * @return 改写后的账号
+     */
+    private String buildReleasedAccount(User user) {
+        String suffix = "#deleted#" + user.getId();
+        String account = StrUtil.blankToDefault(user.getUserAccount(), "user");
+        // userAccount 列是 varchar(256)，截断原账号给后缀留位置
+        int keepLength = Math.min(account.length(), USER_ACCOUNT_MAX_LENGTH - suffix.length());
+        return account.substring(0, keepLength) + suffix;
     }
 }
