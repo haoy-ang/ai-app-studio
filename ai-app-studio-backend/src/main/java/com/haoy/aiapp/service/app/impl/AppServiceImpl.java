@@ -28,6 +28,7 @@ import com.haoy.aiapp.model.entity.User;
 import com.haoy.aiapp.model.vo.app.AppVO;
 import com.haoy.aiapp.model.vo.user.AppUserVO;
 import com.haoy.aiapp.service.app.AppService;
+import com.haoy.aiapp.service.appversion.AppVersionService;
 import com.haoy.aiapp.service.chathistory.ChatHistoryService;
 import com.haoy.aiapp.service.user.UserService;
 import com.haoy.aiapp.utils.SortFieldValidator;
@@ -89,6 +90,9 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
 
     @Resource
     private AiCodeGenTypeRoutingServiceFactory aiCodeGenTypeRoutingServiceFactory;
+
+    @Resource
+    private AppVersionService appVersionService;
 
     /**
      * 创建应用
@@ -321,7 +325,13 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
         // 再清理对象存储上的封面图，避免 COS 里堆积孤儿文件；同样不阻断主流程
         cleanupAppCover(appId);
         // 最后删除应用本身
-        return super.removeById(id);
+        boolean removed = super.removeById(id);
+        // 应用删掉了，它的版本记录和磁盘快照就是纯垃圾，需要一起清掉。
+        // 放在 super.removeById 之后：应用删除失败时版本还得留着，否则用户看不到应用、历史版本也没了。
+        if (removed) {
+            appVersionService.deleteByAppId(appId);
+        }
+        return removed;
     }
 
     /**

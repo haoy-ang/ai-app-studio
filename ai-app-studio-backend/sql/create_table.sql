@@ -63,3 +63,30 @@ create table chat_history
     INDEX idx_createTime (createTime),             -- 提升基于时间的查询性能
     INDEX idx_appId_createTime (appId, createTime) -- 游标查询核心索引
 ) comment '对话历史' collate = utf8mb4_unicode_ci;
+
+-- 应用版本表（每生成一次打一个快照，可回滚）
+-- 设计要点：
+-- 1. versionNo 在同一 appId 内单调递增；UK(appId, versionNo) 是「并发下不会撞号」的最后一道防线
+-- 2. contentHash 用来跳过「重新生成但产物一模一样」的无效版本，避免版本列表被噪声灌满
+-- 3. isCurrent 标记当前生效版本，回滚就是「切标记 + 把快照目录写回生成目录」
+-- 4. 产物本身不放数据库（可能几百 MB），只存相对路径，便于把版本根目录外置/迁移
+create table if not exists app_version
+(
+    id          bigint auto_increment comment 'id' primary key,
+    appId       bigint                             not null comment '应用 id',
+    versionNo   int                                not null comment '版本号（同一应用内递增，从 1 开始）',
+    codeGenType varchar(64)                        not null comment '生成该版本时的代码类型',
+    contentHash char(64)                           not null comment '产物内容摘要（sha256）',
+    fileCount   int      default 0                 not null comment '快照文件数',
+    sizeBytes   bigint   default 0                 not null comment '快照体积（字节）',
+    storagePath varchar(512)                       not null comment '快照目录（相对版本根目录）',
+    source      varchar(32)                        not null comment '来源：CHAT / WORKFLOW / ROLLBACK',
+    prompt      varchar(512)                       null comment '触发本次生成的用户消息（截断）',
+    isCurrent   tinyint  default 0                 not null comment '是否当前生效版本',
+    userId      bigint                             null comment '操作人 id',
+    createTime  datetime default CURRENT_TIMESTAMP not null comment '创建时间',
+    updateTime  datetime default CURRENT_TIMESTAMP not null on update CURRENT_TIMESTAMP comment '更新时间',
+    isDelete    tinyint  default 0                 not null comment '是否删除',
+    UNIQUE KEY uk_app_versionNo (appId, versionNo), -- 防止并发打快照撞号
+    INDEX idx_appId_isCurrent (appId, isCurrent)    -- 「取当前版本」是最高频查询
+) comment '应用版本' collate = utf8mb4_unicode_ci;

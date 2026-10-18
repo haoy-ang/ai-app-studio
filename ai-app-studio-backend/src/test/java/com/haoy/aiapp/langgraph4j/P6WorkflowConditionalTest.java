@@ -200,7 +200,7 @@ class P6WorkflowConditionalTest {
 
         // 首次 + 2 次返工 = MAX_CODE_GENERATION_ATTEMPTS，之后刹车放行
         verify(facade, times(CodeGenWorkflow.MAX_CODE_GENERATION_ATTEMPTS))
-                .generateAndSaveCodeStream(anyString(), eq(CodeGenTypeEnum.HTML), eq(990101L));
+                .generateAndSaveCodeStream(anyString(), eq(CodeGenTypeEnum.HTML), eq(990101L), any());
         assertEquals(CodeGenWorkflow.MAX_CODE_GENERATION_ATTEMPTS, result.getCodeGenerationCount().intValue(),
                 "生成计数必须正好停在上限，说明刹车生效且没有多跑");
         // 计数到顶后仍然放行，最终目录照常给出（否则调用方拿不到产物）
@@ -209,7 +209,7 @@ class P6WorkflowConditionalTest {
         // 提示词：首次是增强提示词，第 2/3 次换成修复提示词
         ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
         verify(facade, times(CodeGenWorkflow.MAX_CODE_GENERATION_ATTEMPTS))
-                .generateAndSaveCodeStream(captor.capture(), any(), any());
+                .generateAndSaveCodeStream(captor.capture(), any(), any(), any());
         List<String> sentMessages = captor.getAllValues();
         assertFalse(sentMessages.get(0).contains("上次生成的代码存在以下问题"), "首次生成用的是增强提示词，不该带修复段");
         assertTrue(sentMessages.get(1).contains("上次生成的代码存在以下问题"), "第 2 次必须带上修复提示词");

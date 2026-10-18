@@ -8,8 +8,10 @@ import com.haoy.aiapp.ai.model.message.ToolExecutedMessage;
 import com.haoy.aiapp.exception.BusinessException;
 import com.haoy.aiapp.exception.ErrorCode;
 import com.haoy.aiapp.model.enums.CodeGenTypeEnum;
+import com.haoy.aiapp.model.enums.VersionSourceEnum;
 import com.haoy.aiapp.parser.CodeParserExecutor;
 import com.haoy.aiapp.saver.CodeFileSaverExecutor;
+import com.haoy.aiapp.service.appversion.AppVersionService;
 import dev.langchain4j.guardrail.InputGuardrailException;
 import dev.langchain4j.service.TokenStream;
 import jakarta.annotation.Resource;
@@ -30,6 +32,9 @@ public class AiCodeGeneratorFacade {
     @Resource
     private AiCodeGeneratorServiceFactory aiCodeGeneratorServiceFactory;
 
+    @Resource
+    private AppVersionService appVersionService;
+
     // ==================== 同步生成 ====================
 
     /**
@@ -49,11 +54,15 @@ public class AiCodeGeneratorFacade {
         return switch (codeGenTypeEnum) {
             case HTML -> {
                 var result = aiCodeGeneratorService.generateHtmlCode(userMessage);
-                yield CodeFileSaverExecutor.executeSaver(result, CodeGenTypeEnum.HTML, appId);
+                File savedDir = CodeFileSaverExecutor.executeSaver(result, CodeGenTypeEnum.HTML, appId);
+                snapshotQuietly(appId, CodeGenTypeEnum.HTML, userMessage, VersionSourceEnum.CHAT);
+                yield savedDir;
             }
             case MULTI_FILE -> {
                 var result = aiCodeGeneratorService.generateMultiFileCode(userMessage);
-                yield CodeFileSaverExecutor.executeSaver(result, CodeGenTypeEnum.MULTI_FILE, appId);
+                File savedDir = CodeFileSaverExecutor.executeSaver(result, CodeGenTypeEnum.MULTI_FILE, appId);
+                snapshotQuietly(appId, CodeGenTypeEnum.MULTI_FILE, userMessage, VersionSourceEnum.CHAT);
+                yield savedDir;
             }
             case VUE_PROJECT -> {
                 throw new BusinessException(ErrorCode.SYSTEM_ERROR, "Vue 工程模式暂不支持同步生成，请使用流式接口");
@@ -76,24 +85,42 @@ public class AiCodeGeneratorFacade {
      * @return 流式响应
      */
     public Flux<String> generateAndSaveCodeStream(String userMessage, CodeGenTypeEnum codeGenTypeEnum, Long appId) {
+        return generateAndSaveCodeStream(userMessage, codeGenTypeEnum, appId, VersionSourceEnum.CHAT);
+    }
+
+    /**
+     * 统一入口：根据类型生成并保存代码（流式），并显式指定版本来源
+     * <p>
+     * 多一个 {@code source} 参数是为了让版本列表能区分「这个版本是对聊出来的还是工作流跑出来的」——
+     * 排查质量问题时第一句话通常是「这次是走哪条链路生成的」。
+     *
+     * @param userMessage     用户提示词
+     * @param codeGenTypeEnum 生成类型
+     * @param appId           应用 ID
+     * @param source          版本来源
+     * @return 流式响应
+     */
+    public Flux<String> generateAndSaveCodeStream(String userMessage, CodeGenTypeEnum codeGenTypeEnum,
+                                                  Long appId, VersionSourceEnum source) {
         if (codeGenTypeEnum == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "生成类型为空");
         }
+        VersionSourceEnum effectiveSource = source == null ? VersionSourceEnum.CHAT : source;
         // 根据 appId + 生成类型获取对应的 AI 服务实例（不同类型用不同模型）
         AiCodeGeneratorService aiCodeGeneratorService = aiCodeGeneratorServiceFactory.getAiCodeGeneratorService(appId, codeGenTypeEnum);
         return switch (codeGenTypeEnum) {
             case HTML -> {
                 Flux<String> codeStream = aiCodeGeneratorService.generateHtmlCodeStream(userMessage);
-                yield processCodeStream(codeStream, CodeGenTypeEnum.HTML, appId);
+                yield processCodeStream(codeStream, CodeGenTypeEnum.HTML, appId, userMessage, effectiveSource);
             }
             case MULTI_FILE -> {
                 Flux<String> codeStream = aiCodeGeneratorService.generateMultiFileCodeStream(userMessage);
-                yield processCodeStream(codeStream, CodeGenTypeEnum.MULTI_FILE, appId);
+                yield processCodeStream(codeStream, CodeGenTypeEnum.MULTI_FILE, appId, userMessage, effectiveSource);
             }
             case VUE_PROJECT -> {
                 // Vue 工程模式返回的是 TokenStream，需要自己适配成 Flux<JSON 消息>
                 TokenStream tokenStream = aiCodeGeneratorService.generateVueProjectCodeStream(appId, userMessage);
-                yield processTokenStream(tokenStream);
+                yield processTokenStream(tokenStream, appId, userMessage, effectiveSource);
             }
             default -> {
                 String errorMessage = "不支持的生成类型：" + codeGenTypeEnum.getValue();
@@ -107,7 +134,8 @@ public class AiCodeGeneratorFacade {
      * <p>
      * 这两类模式的流是「纯文本代码块」，直接收集完整内容后走解析器 + 保存器即可。
      */
-    private Flux<String> processCodeStream(Flux<String> codeStream, CodeGenTypeEnum codeGenType, Long appId) {
+    private Flux<String> processCodeStream(Flux<String> codeStream, CodeGenTypeEnum codeGenType, Long appId,
+                                          String prompt, VersionSourceEnum source) {
         StringBuilder codeBuilder = new StringBuilder();
         return codeStream
                 .doOnNext(codeBuilder::append)
@@ -117,6 +145,7 @@ public class AiCodeGeneratorFacade {
                         Object parsedResult = CodeParserExecutor.executeParser(completeCode, codeGenType);
                         File savedDir = CodeFileSaverExecutor.executeSaver(parsedResult, codeGenType, appId);
                         log.info("{} 流式代码保存成功，路径：{}", codeGenType.getText(), savedDir.getAbsolutePath());
+                        snapshotQuietly(appId, codeGenType, prompt, source);
                         return Flux.empty();
                     } catch (Exception e) {
                         // ⚠️ 这里绝对不能只 log 完事：原来的写法会把异常吞掉，前端照样收到 done 事件、
@@ -153,9 +182,12 @@ public class AiCodeGeneratorFacade {
      * 否则会占着 Servlet 请求线程好几分钟（本项目是 Spring MVC，返回 Flux 时由 ReactiveTypeHandler 适配成 SSE）。
      *
      * @param tokenStream AI Service 返回的流
+     * @param appId       应用 ID（用于生成完成后的版本快照）
+     * @param prompt      本次提示词（记入版本记录，方便回溯是哪个需求产生的版本）
+     * @param source      版本来源（聊天 / 工作流）
      * @return 元素为 JSON 消息字符串的 Flux
      */
-    private Flux<String> processTokenStream(TokenStream tokenStream) {
+    private Flux<String> processTokenStream(TokenStream tokenStream, Long appId, String prompt, VersionSourceEnum source) {
         return Flux.<String>create(sink -> {
                     tokenStream
                             // AI 输出的自然语言文本片段
@@ -165,7 +197,13 @@ public class AiCodeGeneratorFacade {
                             .onToolExecuted(toolExecution ->
                                     sink.next(JSONUtil.toJsonStr(new ToolExecutedMessage(toolExecution))))
                             // 整个响应结束
-                            .onCompleteResponse(response -> sink.complete())
+                            // Vue 模式下文件是工具调用期间直接落盘的，所以到这里目录内容才算最终态，
+                            // 快照放这里最合适。放在 sink.complete() 之前，是为了让前端收到 done 时
+                            // 版本列表已经是可查的（用户刷新就能看到这一版）。
+                            .onCompleteResponse(response -> {
+                                snapshotQuietly(appId, CodeGenTypeEnum.VUE_PROJECT, prompt, source);
+                                sink.complete();
+                            })
                             // 输入护轨被触发时，直接把原因作为一条普通消息推给前端：
                             // 如果走 sink.error，前端 EventSource 只会报一个笼统的「连接错误」，
                             // 用户完全不知道是自己输入的问题。
@@ -182,5 +220,36 @@ public class AiCodeGeneratorFacade {
                             .start();
                 })
                 .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    // ==================== 版本快照 ====================
+
+    /**
+     * 生成成功后打一个版本快照。
+     * <p>
+     * 三条铁律：
+     * <ol>
+     *   <li><b>绝不影响生成</b>：快照是增值能力，磁盘满 / 路径无权限 / 数据库抖动都不该让用户
+     *       看到「生成失败」。所以这里吞掉所有异常，只 warn。</li>
+     *   <li><b>appId 为空时跳过</b>：门面也被调试接口和测试直接调用，那种场景没有应用实体，
+     *       没有 app 就没有版本的概念。</li>
+     *   <li><b>不传 userId</b>：门面只负责记录「谁生成了什么版本」，归属校验在 service 层
+     *       通过 app 表反查，避免在这里多绕一层依赖。</li>
+     * </ol>
+     *
+     * @param appId  应用 ID，可为 null
+     * @param type   生成类型
+     * @param prompt 本次提示词
+     * @param source 版本来源
+     */
+    private void snapshotQuietly(Long appId, CodeGenTypeEnum type, String prompt, VersionSourceEnum source) {
+        if (appId == null) {
+            return;
+        }
+        try {
+            appVersionService.snapshot(appId, type, source, prompt, null);
+        } catch (Exception e) {
+            log.warn("生成版本快照失败（不影响本次生成），appId: {}，类型: {}", appId, type.getValue(), e);
+        }
     }
 }

@@ -11,6 +11,10 @@
 # ==================== AI 模型 ====================
 langchain4j:
   open-ai:
+    # ⚠️ 这两个 custom-headers 不是可选项，是本机实测过的绕坑项。
+    # 不加的话，所有「非流式」调用都会抛 JsonEOFException（响应只剩 1 个字节）。
+    # 原因是 Spring 的 HttpComponents 请求工厂在解压「vary: accept-encoding + chunked」响应时会截断。
+    # 详见 application.yml 里那段长注释。
     # 非流式对话模型：负责结构化输出（HtmlCodeResult / MultiFileCodeResult）
     chat-model:
       # 复用下面 streaming 的密钥，避免两处重复维护
@@ -25,6 +29,8 @@ langchain4j:
       response-format: json_object
       # 调用失败自动重试次数（只给非流式模型配，streaming builder 没有该方法）
       max-retries: 3
+      custom-headers:
+        Accept-Encoding: identity
 
     # 智能路由专用模型：只做「HTML / 多文件 / Vue 三选一」的分类
     # 用 qwen-turbo 比 deepseek-chat 便宜一个数量级，走阿里云百炼的 OpenAI 兼容层。
@@ -45,6 +51,8 @@ langchain4j:
       log-responses: true
       max-tokens: 32768
       temperature: 0.7
+      custom-headers:
+        Accept-Encoding: identity
 
 # ==================== 对象存储（存放应用封面截图）====================
 cos:

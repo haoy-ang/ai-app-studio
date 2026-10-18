@@ -11,6 +11,7 @@ import com.haoy.aiapp.langgraph4j.model.ImageResource;
 import com.haoy.aiapp.langgraph4j.model.QualityResult;
 import com.haoy.aiapp.langgraph4j.state.WorkflowContext;
 import com.haoy.aiapp.model.enums.CodeGenTypeEnum;
+import com.haoy.aiapp.model.enums.VersionSourceEnum;
 import org.bsc.langgraph4j.action.AsyncNodeAction;
 import org.bsc.langgraph4j.prebuilt.MessagesState;
 import org.junit.jupiter.api.Test;
@@ -230,7 +231,7 @@ class P4NodesTest {
     @Test
     void codeGeneratorShouldWriteGeneratedDirUsingContextAppId() {
         AiCodeGeneratorFacade facade = mock(AiCodeGeneratorFacade.class);
-        when(facade.generateAndSaveCodeStream(anyString(), any(), any())).thenReturn(Flux.just("ok"));
+        when(facade.generateAndSaveCodeStream(anyString(), any(), any(), any())).thenReturn(Flux.just("ok"));
 
         WorkflowContext context = run(CodeGeneratorNode.create(facade), WorkflowContext.builder()
                 .originalPrompt("做个博客")
@@ -247,7 +248,9 @@ class P4NodesTest {
         // 用的是增强提示词，不是原始需求
         verify(facade).generateAndSaveCodeStream(org.mockito.ArgumentMatchers.eq("做个博客 + 素材"),
                 org.mockito.ArgumentMatchers.eq(CodeGenTypeEnum.MULTI_FILE),
-                org.mockito.ArgumentMatchers.eq(7L));
+                org.mockito.ArgumentMatchers.eq(7L),
+                // 工作流链路产生的版本要标 WORKFLOW，不能混成 CHAT
+                org.mockito.ArgumentMatchers.eq(VersionSourceEnum.WORKFLOW));
         assertEquals("代码生成", context.getCurrentStep());
     }
 
@@ -257,7 +260,7 @@ class P4NodesTest {
     @Test
     void codeGeneratorShouldSurviveStreamError() {
         AiCodeGeneratorFacade facade = mock(AiCodeGeneratorFacade.class);
-        when(facade.generateAndSaveCodeStream(anyString(), any(), any()))
+        when(facade.generateAndSaveCodeStream(anyString(), any(), any(), any()))
                 .thenReturn(Flux.error(new RuntimeException("模型超时")));
 
         WorkflowContext context = run(CodeGeneratorNode.create(facade), WorkflowContext.builder()

@@ -8,6 +8,7 @@ import com.haoy.aiapp.langgraph4j.ai.CodeQualityCheckService;
 import com.haoy.aiapp.langgraph4j.ai.ImageCollectionService;
 import com.haoy.aiapp.langgraph4j.state.WorkflowContext;
 import com.haoy.aiapp.model.enums.CodeGenTypeEnum;
+import com.haoy.aiapp.model.enums.VersionSourceEnum;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.GraphRepresentation;
 import org.bsc.langgraph4j.prebuilt.MessagesState;
@@ -140,7 +141,8 @@ class P5WorkflowTest {
                 .executeWorkflow("做个博客", 990002L);
 
         ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
-        verify(facade).generateAndSaveCodeStream(captor.capture(), eq(CodeGenTypeEnum.HTML), eq(990002L));
+        verify(facade).generateAndSaveCodeStream(captor.capture(), eq(CodeGenTypeEnum.HTML), eq(990002L),
+                eq(VersionSourceEnum.WORKFLOW));
         String sentToAi = captor.getValue();
         assertTrue(sentToAi.contains("做个博客"), "必须带上用户原始需求");
         assertTrue(sentToAi.contains("## 可用素材资源"), "必须带上素材段落");

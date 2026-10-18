@@ -61,7 +61,7 @@ final class WorkflowTestSupport {
      */
     static AiCodeGeneratorFacade facadeWritingCode() {
         AiCodeGeneratorFacade facade = mock(AiCodeGeneratorFacade.class);
-        when(facade.generateAndSaveCodeStream(anyString(), any(), any())).thenAnswer(invocation -> {
+        when(facade.generateAndSaveCodeStream(anyString(), any(), any(), any())).thenAnswer(invocation -> {
             CodeGenTypeEnum type = invocation.getArgument(1);
             Long appId = invocation.getArgument(2);
             Path dir = codeDirOf(type, appId);

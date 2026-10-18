@@ -7,6 +7,7 @@ import com.haoy.aiapp.core.AiCodeGeneratorFacade;
 import com.haoy.aiapp.langgraph4j.model.QualityResult;
 import com.haoy.aiapp.langgraph4j.state.WorkflowContext;
 import com.haoy.aiapp.model.enums.CodeGenTypeEnum;
+import com.haoy.aiapp.model.enums.VersionSourceEnum;
 import lombok.extern.slf4j.Slf4j;
 import org.bsc.langgraph4j.action.AsyncNodeAction;
 import org.bsc.langgraph4j.prebuilt.MessagesState;
@@ -67,7 +68,8 @@ public class CodeGeneratorNode {
                     (context.getCodeGenerationCount() == null ? 0 : context.getCodeGenerationCount()) + 1);
 
             try {
-                Flux<String> codeStream = codeGeneratorFacade.generateAndSaveCodeStream(userMessage, generationType, appId);
+                Flux<String> codeStream = codeGeneratorFacade.generateAndSaveCodeStream(
+                        userMessage, generationType, appId, VersionSourceEnum.WORKFLOW);
                 // 同步等待流结束：超时或流内报错都只记日志，让下游据「目录里有没有文件」自行判断
                 codeStream.blockLast(Duration.ofMinutes(TIMEOUT_MINUTES));
             } catch (Exception e) {

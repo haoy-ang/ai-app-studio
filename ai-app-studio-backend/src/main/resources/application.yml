@@ -83,4 +83,15 @@ app:
     root-dir: ${APP_DEPLOY_ROOT_DIR:E:/ai-app-studio-data/deploy}
     # 部署访问地址前缀（本机 80 被 IIS/W3SVC 占用，Nginx 改监听 8080）
     host: ${APP_DEPLOY_HOST:http://localhost:8080}
+  # 版本快照配置
+  # 快照存的是「每次生成后的产物副本」，是用户资产，所以和部署目录一样固定到项目之外的绝对路径，
+  # 不跟 user.dir 走（项目改名 / IDE 启动 / jar 启动的工作目录都不一样）。
+  version:
+    # 关掉之后生成不再打快照，历史版本仍可查询
+    enabled: ${APP_VERSION_ENABLED:true}
+    root-dir: ${APP_VERSION_ROOT_DIR:E:/ai-app-studio-data/versions}
+    # 每个应用最多保留多少个版本（当前版本永不清理）
+    max-keep: 10
+    # 单个快照体积上限 32MB，超限跳过本次快照（Vue 的 node_modules/dist 已在存储层排除）
+    max-size-bytes: 33554432
 
