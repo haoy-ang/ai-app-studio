@@ -1,0 +1,20 @@
+:root {
+    --bg: #0f1115;
+    --surface: #181b21;
+    --text: #e6e8ec;
+    --muted: #8b929e;
+    --accent: #f97362;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "PingFang SC", sans-serif;
+    min-height: 100vh;
+}

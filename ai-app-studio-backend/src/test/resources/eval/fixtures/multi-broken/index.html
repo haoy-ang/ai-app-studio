@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>任务看板</title>
+    <link rel="stylesheet" href="./missing-style.css">
+</head>
+<body>
+<header class="board-header">
+    <h1>这周要干完的事</h1>
+    <p>拖拽卡片可以调整优先级，状态变更会记录在本地存储里。</p>
+</header>
+<main class="board">
+    <section class="column">
+        <h2>待办</h2>
+        <ul>
+            <li>把接口文档补完</li>
+            <li>给导出功能加一个进度条</li>
+        </ul>
+    </section>
+    <section class="column">
+        <h2>进行中</h2>
+        <ul>
+            <li>重构限流切面的错误码</li>
+        </ul>
+    </section>
+    <section class="column">
+        <h2>已完成</h2>
+        <ul>
+            <li>去掉列表查询里的字符串拼接排序</li>
+        </ul>
+    </section>
+</main>
+<footer class="board-footer">
+    <p>数据只保存在当前浏览器，换设备不会同步。</p>
+</footer>
+<script src="./missing-app.js"></script>
+</body>
+</html>

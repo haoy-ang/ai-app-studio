@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Todo List · 极简待办</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 560px; margin: 64px auto; }
+        .todo-item { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid #eee; }
+        .todo-item.done { color: #9aa0a6; text-decoration: line-through; }
+        .todo-input { width: 100%; padding: 10px; font-size: 15px; }
+    </style>
+</head>
+<body>
+<h1>Todo List</h1>
+<p class="hint">今天要完成的 3 件事，勾掉就消失。</p>
+
+<form class="todo-form">
+    <input class="todo-input" type="text" placeholder="添加一条待办">
+</form>
+
+<ul class="todo-list">
+    <li class="todo-item">读完《重构》第 6 章</li>
+    <li class="todo-item">把限流阈值写进配置文件</li>
+    <li class="todo-item done">给导出接口补上限流注解</li>
+</ul>
+
+<p class="footer-note">数据保存在浏览器本地，关掉页面也不会丢。</p>
+</body>
+</html>
