@@ -1,0 +1,9 @@
+{
+  "id": "example-html-landing",
+  "prompt": "做一个咖啡店的落地页，包含导航栏、首屏大标题、三款产品介绍和页脚",
+  "expectedType": "html",
+  "mustInclude": ["<nav", "<footer"],
+  "mustNotInclude": ["TODO", "lorem ipsum"],
+  "timeoutSec": 180,
+  "note": "格式示例。真实用例放 .workbuddy/eval/cases/（不进仓库），这里只用来验证解析逻辑"
+}

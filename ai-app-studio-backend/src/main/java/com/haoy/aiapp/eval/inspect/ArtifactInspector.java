@@ -240,6 +240,26 @@ public final class ArtifactInspector {
     }
 
     /**
+     * 把产物目录里所有文本文件的内容拼起来
+     * <p>
+     * 给「用例级断言」用（比如「产物里必须出现 {@code <nav}」）。之所以拼成一个字符串而不是
+     * 让调用方自己挑文件：需求里的要求可能落在任何位置 —— 导航栏可能在 {@code index.html}，
+     * 也可能在 {@code src/App.vue}。拼起来搜才不会漏。
+     * <p>
+     * 内部走的是同一套遍历逻辑，所以 {@code node_modules} / {@code dist} 同样被剪掉。
+     *
+     * @param artifactDir 产物根目录
+     * @return 全部文本内容；目录不存在时返回空串
+     */
+    public static String readAllText(Path artifactDir) {
+        StringBuilder sb = new StringBuilder();
+        for (Path file : ArtifactFiles.textFiles(artifactDir)) {
+            sb.append(ArtifactFiles.read(file)).append('\n');
+        }
+        return sb.toString();
+    }
+
+    /**
      * 从目录名推断生成类型
      *
      * @param dir 如 {@code vue_project_123}
