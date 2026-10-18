@@ -120,6 +120,98 @@ class MultiFileCodeFileSaverTemplateTest {
         assertFalse(projectRoot.exists());
     }
 
+    // ==================== 文件名不能再靠硬编码假设 ====================
+
+    @Test
+    @DisplayName("模型把外链写成 main.css：样式必须落到 main.css，否则页面照样没样式")
+    void testHonoursCustomCssFileName() {
+        MultiFileCodeResult result = new MultiFileCodeResult();
+        result.setHtmlCode("""
+                <html><head><link rel="stylesheet" href="main.css"></head>
+                <body><h1>首页</h1><script src="script.js"></script></body></html>
+                """);
+        result.setCssCode("body { margin: 0; }");
+        result.setJsCode("console.log('ok')");
+
+        File dir = saver.saveCode(result, TEST_APP_ID);
+        Path base = dir.toPath();
+
+        // 这一条是本次修的核心：写死 style.css 的话，html 引用的 main.css 就是 404
+        assertTrue(Files.exists(base.resolve("main.css")), "样式必须落在 html 实际引用的 main.css 上");
+        assertFalse(Files.exists(base.resolve("style.css")),
+                "既然 html 没引用 style.css，就不该多产出这个文件");
+        assertTrue(Files.exists(base.resolve("script.js")));
+    }
+
+    @Test
+    @DisplayName("外链在子目录（css/main.css）时要自动建目录，不能因为目录不存在就丢文件")
+    void testSupportsSubDirectoryRef() {
+        MultiFileCodeResult result = new MultiFileCodeResult();
+        result.setHtmlCode("""
+                <html><head><link rel="stylesheet" href="css/main.css"></head>
+                <body><h1>首页</h1></body></html>
+                """);
+        result.setCssCode("body { margin: 0; }");
+
+        File dir = saver.saveCode(result, TEST_APP_ID);
+
+        assertTrue(Files.exists(dir.toPath().resolve("css/main.css")),
+                "带子目录的引用要连目录一起建出来");
+    }
+
+    @Test
+    @DisplayName("外链带查询串 style.css?v=2：仍能认出来，文件名不能变成 style.css?v=2")
+    void testStripsQueryString() {
+        MultiFileCodeResult result = new MultiFileCodeResult();
+        result.setHtmlCode("""
+                <html><head><link rel="stylesheet" href="style.css?v=2"></head>
+                <body><h1>首页</h1></body></html>
+                """);
+
+        // CSS 代码块为空 + 确实引用了 style.css → 必须报错（查询串不能把校验绕过去）
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> saver.saveCode(result, TEST_APP_ID));
+        assertTrue(ex.getMessage().contains("style.css"), "错误信息要指出缺的是 style.css：" + ex.getMessage());
+
+        result.setCssCode("body { margin: 0; }");
+        File dir = saver.saveCode(result, TEST_APP_ID);
+        assertTrue(Files.exists(dir.toPath().resolve("style.css")), "查询串不该混进文件名");
+    }
+
+    @Test
+    @DisplayName("外链指向 CDN 时不要求本地 CSS 代码块 —— 那是别人的文件，不该我们生成")
+    void testIgnoresExternalCdnRefs() {
+        MultiFileCodeResult result = new MultiFileCodeResult();
+        result.setHtmlCode("""
+                <html><head>
+                  <link rel="stylesheet" href="https://cdn.example.com/reset.css">
+                </head><body><h1>首页</h1></body></html>
+                """);
+
+        File dir = saver.saveCode(result, TEST_APP_ID);
+
+        assertTrue(Files.exists(dir.toPath().resolve("index.html")));
+        assertFalse(Files.exists(dir.toPath().resolve("style.css")), "不该凭空造文件");
+    }
+
+    @Test
+    @DisplayName("引用带 ../ 的路径：不跟着写出去（防目录穿越），回落到默认名")
+    void testRejectsPathTraversal() {
+        MultiFileCodeResult result = new MultiFileCodeResult();
+        result.setHtmlCode("""
+                <html><head><link rel="stylesheet" href="../../evil.css"></head>
+                <body><h1>首页</h1></body></html>
+                """);
+        result.setCssCode("body { margin: 0; }");
+
+        File dir = saver.saveCode(result, TEST_APP_ID);
+        Path base = dir.toPath();
+
+        assertTrue(Files.exists(base.resolve("style.css")), "解析不出安全路径时应回落到默认名");
+        assertFalse(Files.exists(base.getParent().getParent().resolve("evil.css")),
+                "模型给的字符串不该有写穿项目目录的能力");
+    }
+
     /**
      * 一次「模型完全遵守格式」的正常结果
      */
