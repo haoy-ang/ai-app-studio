@@ -29,6 +29,7 @@ import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.BeanUtils;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
@@ -106,12 +107,16 @@ public class AppController {
 
     /**
      * 【用户】根据 id 删除自己的应用（管理员也可通过该接口删除任意应用）
+     * <p>
+     * 删应用会改变精选集合（用户自己的作品可能正在精选位上），所以必须清掉精选列表缓存。
+     * 不清的话最长 5 分钟内首页还会展示一个已经删掉的应用 —— 点进去是 404。
      *
      * @param deleteRequest 删除请求
      * @param request       请求
      * @return 删除结果
      */
     @PostMapping("/delete")
+    @CacheEvict(value = "good_app_page", allEntries = true)
     public BaseResponse<Boolean> deleteApp(@RequestBody DeleteRequest deleteRequest, HttpServletRequest request) {
         ThrowUtils.throwIf(deleteRequest == null || deleteRequest.getId() == null || deleteRequest.getId() <= 0,
                 ErrorCode.PARAMS_ERROR);
@@ -213,6 +218,7 @@ public class AppController {
      */
     @PostMapping("/admin/delete")
     @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
+    @CacheEvict(value = "good_app_page", allEntries = true)
     public BaseResponse<Boolean> deleteAppByAdmin(@RequestBody DeleteRequest deleteRequest) {
         ThrowUtils.throwIf(deleteRequest == null || deleteRequest.getId() == null || deleteRequest.getId() <= 0,
                 ErrorCode.PARAMS_ERROR);
@@ -226,12 +232,21 @@ public class AppController {
 
     /**
      * 【管理员】根据 id 更新任意应用（支持更新应用名称、应用封面、优先级）
+     * <p>
+     * 两条约束写在这里，理由都是「精选位是给用户点开体验的」：
+     * <ol>
+     *   <li><b>未部署不能设为精选</b>：卡片上的「查看作品」是 {@code v-if="deployKey"}，
+     *       没部署就没有按钮，精选位等于占着位置却点不开；</li>
+     *   <li><b>改完必须清缓存</b>：精选列表挂了 5 分钟 TTL 的旁路缓存，
+     *       不清的话管理员点完「精选」刷新首页看不到，会以为没生效反复点。</li>
+     * </ol>
      *
      * @param appAdminUpdateRequest 更新请求
      * @return 更新结果
      */
     @PostMapping("/admin/update")
     @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
+    @CacheEvict(value = "good_app_page", allEntries = true)
     public BaseResponse<Boolean> updateAppByAdmin(@RequestBody AppAdminUpdateRequest appAdminUpdateRequest) {
         ThrowUtils.throwIf(appAdminUpdateRequest == null || appAdminUpdateRequest.getId() == null,
                 ErrorCode.PARAMS_ERROR);
@@ -239,6 +254,11 @@ public class AppController {
         // 判断是否存在
         App oldApp = appService.getById(id);
         ThrowUtils.throwIf(oldApp == null, ErrorCode.NOT_FOUND_ERROR);
+        // 设为精选前校验：必须是已部署的应用（deployKey 在部署成功后才写入）
+        if (AppConstant.GOOD_APP_PRIORITY.equals(appAdminUpdateRequest.getPriority())
+                && StrUtil.isBlank(oldApp.getDeployKey())) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "该应用尚未部署，不能设为精选");
+        }
         App app = new App();
         BeanUtils.copyProperties(appAdminUpdateRequest, app);
         // 设置编辑时间

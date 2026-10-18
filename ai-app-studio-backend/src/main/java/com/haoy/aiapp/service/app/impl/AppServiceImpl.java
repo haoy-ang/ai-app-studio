@@ -21,6 +21,7 @@ import com.mybatisflex.spring.service.impl.ServiceImpl;
 import com.haoy.aiapp.exception.BusinessException;
 import com.haoy.aiapp.exception.ErrorCode;
 import com.haoy.aiapp.manager.CosManager;
+import com.haoy.aiapp.manager.DeployDirManager;
 import com.haoy.aiapp.mapper.app.AppMapper;
 import com.haoy.aiapp.model.dto.app.AppQueryRequest;
 import com.haoy.aiapp.model.entity.App;
@@ -72,6 +73,9 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
 
     @Resource
     private CosManager cosManager;
+
+    @Resource
+    private DeployDirManager deployDirManager;
 
     @Resource
     private UserService userService;
@@ -260,7 +264,13 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
                 .eq("userId", userId);
         // 排序字段必须命中白名单，否则忽略（防止前端传入任意 SQL 片段造成注入）
         String safeSortField = SortFieldValidator.validate(sortField, ALLOWED_SORT_FIELDS);
-        if (safeSortField != null) {
+        if (safeSortField == null) {
+            // 没传排序字段时给个默认值，而不是「不排序」：
+            // MySQL 不保证没有 ORDER BY 时的行顺序，分页时同一个查询两次执行可能给出不同顺序，
+            // 表现就是「翻到第 2 页又看到第 1 页的几条」。前端目前都传了 createTime，
+            // 但接口契约不该依赖调用方自觉 —— 换个调用方（比如后台导出）就会踩。
+            queryWrapper.orderBy("createTime", false);
+        } else {
             queryWrapper.orderBy(safeSortField, "ascend".equals(sortOrder));
         }
         return queryWrapper;
@@ -302,7 +312,12 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
     }
 
     /**
-     * 重写删除方法，删除应用时关联删除该应用下的所有对话历史
+     * 重写删除方法：删除应用时级联清掉一切「只属于这个应用」的东西
+     * <p>
+     * 顺序是有讲究的：<b>数据库记录一删，deployKey 就再也查不到了</b>，
+     * 而部署目录名恰好就是 deployKey。所以必须在 {@code super.removeById} 之前
+     * 把应用读出来，否则那个目录会变成谁也定位不到、谁也删不掉的孤儿 ——
+     * 更要命的是 Nginx 只认目录不认数据库，原链接会一直能打开。
      *
      * @param id 应用 id
      * @return 是否删除成功
@@ -316,14 +331,20 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
         if (appId <= 0) {
             return false;
         }
-        // 先删关联的对话历史：这里做容错设计，即使删除对话历史失败也不阻断应用删除这个核心操作
+        // 先读一次：封面地址和 deployKey 都在这里，删完就取不到了
+        App app = this.getById(appId);
+        // 删关联的对话历史：这里做容错设计，即使删除对话历史失败也不阻断应用删除这个核心操作
         try {
             chatHistoryService.deleteByAppId(appId);
         } catch (Exception e) {
             log.error("删除应用关联对话历史失败，appId: {}, error: {}", appId, e.getMessage());
         }
-        // 再清理对象存储上的封面图，避免 COS 里堆积孤儿文件；同样不阻断主流程
-        cleanupAppCover(appId);
+        // 清理对象存储上的封面图，避免 COS 里堆积孤儿文件
+        cleanupAppCover(app);
+        // 清理部署产物目录：不删的话「已删除」的应用链接仍然可以访问
+        if (app != null) {
+            deployDirManager.deleteByDeployKey(app.getDeployKey());
+        }
         // 最后删除应用本身
         boolean removed = super.removeById(id);
         // 应用删掉了，它的版本记录和磁盘快照就是纯垃圾，需要一起清掉。
@@ -340,17 +361,16 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
      * 这里做容错设计：封面可能为空、可能是管理员手填的外部链接（此时 {@code deleteFileByUrl} 会跳过），
      * 删除失败也不应该影响应用本身的删除。
      *
-     * @param appId 应用 id
+     * @param app 应用（调用方已经查过一次，不再重复查库）
      */
-    private void cleanupAppCover(Long appId) {
+    private void cleanupAppCover(App app) {
+        if (app == null || StrUtil.isBlank(app.getCover())) {
+            return;
+        }
         try {
-            App app = this.getById(appId);
-            if (app == null || StrUtil.isBlank(app.getCover())) {
-                return;
-            }
             cosManager.deleteFileByUrl(app.getCover());
         } catch (Exception e) {
-            log.error("删除应用封面文件失败，appId: {}", appId, e);
+            log.error("删除应用封面文件失败，appId: {}", app.getId(), e);
         }
     }
 
