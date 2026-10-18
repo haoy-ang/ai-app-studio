@@ -211,7 +211,8 @@ const handleDeployApp = async (app: API.AppVO) => {
   }
   const hide = message.loading('部署中，Vue 工程需要构建，可能要几分钟…', 0)
   try {
-    const res = await deployApp({ appId: Number(app.id) })
+    // appId 是雪花 id，直接透传字符串：Number() 会丢精度，后端会报「应用不存在」
+    const res = await deployApp({ appId: app.id })
     if (res.data.code === 0) {
       message.success('部署成功')
       // 部署成功会写入 deployKey，卡片上的「查看作品」要跟着出现
@@ -240,13 +241,15 @@ const handleDeleteApp = (app: API.AppVO) => {
     cancelText: '取消',
     onOk: async () => {
       try {
-        const res = await deleteApp({ id: Number(app.id) })
-        if (res.data.code === 0) {
+        // id 原样透传（雪花 id，不能 Number）
+        const res = await deleteApp({ id: app.id })
+        // code === 0 只代表"请求处理完了"，data 才是"真的删掉了没有"
+        if (res.data.code === 0 && res.data.data) {
           message.success('已删除')
           // 自己的作品也可能在精选位（后端已同步清掉缓存），列表要一起刷
           await Promise.all([loadMyApps(), loadFeaturedApps()])
         } else {
-          message.error('删除失败：' + (res.data.message || '未知错误'))
+          message.error('删除失败：' + (res.data.message || '后端未删除任何记录'))
         }
       } catch (error) {
         console.error('删除应用失败：', error)

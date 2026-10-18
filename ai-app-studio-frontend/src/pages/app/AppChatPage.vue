@@ -286,7 +286,7 @@ const hasMoreHistory = ref(false)
 // 游标：上一页最后一条消息的 id。
 // 用 id（雪花号，唯一且递增）而不是 createTime（精度只到秒）；
 // 用户消息和 AI 消息经常落在同一秒，用时间做游标会把同秒的记录整批跳过，翻历史会"丢一段"。
-const lastMessageId = ref<number>()
+const lastMessageId = ref<API.SnowflakeId>()
 const historyLoaded = ref(false)
 
 // 预览相关
@@ -393,7 +393,7 @@ const fetchAppInfo = async () => {
   appId.value = id
 
   try {
-    const res = await getAppVoById({ id: id as unknown as number })
+    const res = await getAppVoById({ id })
     if (res.data.code === 0 && res.data.data) {
       appInfo.value = res.data.data
 
@@ -438,7 +438,7 @@ const refreshAppInfoOnly = async () => {
   const id = appId.value
   if (!id) return
   try {
-    const res = await getAppVoById({ id: id as unknown as number })
+    const res = await getAppVoById({ id })
     if (res.data.code === 0 && res.data.data) {
       appInfo.value = res.data.data
     }
@@ -779,7 +779,7 @@ const deployApp = async () => {
   deploying.value = true
   try {
     const res = await deployAppApi({
-      appId: appId.value as unknown as number,
+      appId: appId.value,
     })
 
     if (res.data.code === 0 && res.data.data) {

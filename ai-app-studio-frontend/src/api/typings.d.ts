@@ -7,8 +7,22 @@
  *  - listAppChatHistoryParams.lastId             [手工]
  *  - ChatHistoryQueryRequest.lastId              [手工]
  *  - UserProfileUpdateRequest                    [手工]
+ *  - SnowflakeId 及所有 id 字段                   [手工]
  */
 declare namespace API {
+  /**
+   * [手工] 雪花 id 在 JSON 里是**字符串**
+   *
+   * 后端 `JsonConfig` 给 Long 注册了 `ToStringSerializer`，所以 id 到前端时是字符串
+   * `"469348007004553216"`。这是有意为之：雪花号远超 JS 安全整数上限
+   * （2^53-1 ≈ 9.007e15），一旦被当成 number，`469348007004553216` 会变成
+   * `469348007004553200`，表现就是「参数明明传了，后端说记录不存在」。
+   *
+   * ⇒ **id 一律按字符串传递**，禁止 `Number(id)` / `parseInt(id)` 这类转换。
+   * 生成的 typings 原本写的是 number，那是不准确的，这里按实际情况改正。
+   */
+  type SnowflakeId = string
+
   type AppAddRequest = {
     initPrompt?: string
     /** [手工] 应用名称，不传则后端取 initPrompt 前 12 位 */
@@ -18,14 +32,14 @@ declare namespace API {
   }
 
   type AppAdminUpdateRequest = {
-    id?: number
+    id?: API.SnowflakeId
     appName?: string
     cover?: string
     priority?: number
   }
 
   type AppDeployRequest = {
-    appId?: number
+    appId?: API.SnowflakeId
   }
 
   type AppQueryRequest = {
@@ -44,12 +58,12 @@ declare namespace API {
   }
 
   type AppUpdateRequest = {
-    id?: number
+    id?: API.SnowflakeId
     appName?: string
   }
 
   type AppVO = {
-    id?: number
+    id?: API.SnowflakeId
     appName?: string
     cover?: string
     initPrompt?: string
@@ -57,7 +71,7 @@ declare namespace API {
     deployKey?: string
     deployedTime?: string
     priority?: number
-    userId?: number
+    userId?: API.SnowflakeId
     createTime?: string
     updateTime?: string
     /** [手工] 公开场景的脱敏用户信息（不含 userAccount） */
@@ -68,7 +82,7 @@ declare namespace API {
 
   /** [手工] 应用作者信息：后端 AppUserVO，刻意不含 userAccount */
   type AppUserVO = {
-    id?: number
+    id?: API.SnowflakeId
     userName?: string
     userAvatar?: string
     userProfile?: string
@@ -136,11 +150,11 @@ declare namespace API {
   }
 
   type ChatHistory = {
-    id?: number
+    id?: API.SnowflakeId
     message?: string
     messageType?: string
-    appId?: number
-    userId?: number
+    appId?: API.SnowflakeId
+    userId?: API.SnowflakeId
     createTime?: string
     updateTime?: string
     isDelete?: number
@@ -157,50 +171,50 @@ declare namespace API {
     appId?: number
     userId?: number
     /** [手工] 游标：上一页最后一条记录的 id（优先） */
-    lastId?: number
+    lastId?: API.SnowflakeId
     lastCreateTime?: string
   }
 
   type chatToGenCodeParams = {
-    appId: number
+    appId: API.SnowflakeId
     message: string
   }
 
   type DeleteRequest = {
-    id?: number
+    id?: API.SnowflakeId
   }
 
   type downloadAppCodeParams = {
-    appId: number
+    appId: API.SnowflakeId
   }
 
   type getAppVOByIdByAdminParams = {
-    id: number
+    id: API.SnowflakeId
   }
 
   type getAppVOByIdParams = {
-    id: number
+    id: API.SnowflakeId
   }
 
   type getUserByIdParams = {
-    id: number
+    id: API.SnowflakeId
   }
 
   type getUserVOByIdParams = {
-    id: number
+    id: API.SnowflakeId
   }
 
   type listAppChatHistoryParams = {
-    appId: number
+    appId: API.SnowflakeId
     pageSize?: number
     /** [手工] 游标：上一页最后一条消息的 id（优先于 lastCreateTime） */
-    lastId?: number
+    lastId?: API.SnowflakeId
     /** [手工] 旧游标，仅为兼容保留 */
     lastCreateTime?: string
   }
 
   type LoginUserVO = {
-    id?: number
+    id?: API.SnowflakeId
     userAccount?: string
     userName?: string
     userAvatar?: string
@@ -289,7 +303,7 @@ declare namespace API {
   }
 
   type UserUpdateRequest = {
-    id?: number
+    id?: API.SnowflakeId
     userName?: string
     userAvatar?: string
     userProfile?: string
@@ -297,7 +311,7 @@ declare namespace API {
   }
 
   type UserVO = {
-    id?: number
+    id?: API.SnowflakeId
     userAccount?: string
     userName?: string
     userAvatar?: string

@@ -87,7 +87,7 @@ const SOURCE_LABEL: Record<string, string> = {
 
 const versions = ref<AppVersionVO[]>([])
 const loading = ref(false)
-const rollingBackId = ref<number | null>(null)
+const rollingBackId = ref<string | null>(null)
 
 const loadVersions = async () => {
   const appId = props.app?.id
@@ -97,7 +97,9 @@ const loadVersions = async () => {
   }
   loading.value = true
   try {
-    const res = await listVersions({ appId: Number(appId) })
+    // 注意：appId 是雪花 id，必须原样（字符串）透传。
+    // Number(appId) 会丢掉末尾几位 → 后端查不到这个应用
+    const res = await listVersions({ appId })
     if (res.data.code === 0 && res.data.data) {
       versions.value = res.data.data
     } else {

@@ -9,8 +9,9 @@ import request from '@/request'
 
 /** 与后端 AppVersionVO 对应 */
 export interface AppVersionVO {
-  id: number
-  appId: number
+  /** 雪花 id：后端 Long 序列化成字符串，前端不要转 number */
+  id: string
+  appId: string
   versionNo: number
   codeGenType: string
   fileCount: number
@@ -30,7 +31,10 @@ interface BaseResponse<T> {
 }
 
 /** 查询某个应用的版本列表（最新在前） */
-export async function listVersions(params: { appId: number }, options?: { [key: string]: any }) {
+export async function listVersions(
+  params: { appId: API.SnowflakeId },
+  options?: { [key: string]: any },
+) {
   return request<BaseResponse<AppVersionVO[]>>('/app/version/list', {
     method: 'GET',
     params,
@@ -39,7 +43,10 @@ export async function listVersions(params: { appId: number }, options?: { [key: 
 }
 
 /** 回滚到指定版本（只恢复生成目录，不会自动重新部署） */
-export async function rollbackVersion(body: { versionId: number }, options?: { [key: string]: any }) {
+export async function rollbackVersion(
+  body: { versionId: API.SnowflakeId },
+  options?: { [key: string]: any },
+) {
   return request<BaseResponse<AppVersionVO>>('/app/version/rollback', {
     method: 'POST',
     headers: {
@@ -51,7 +58,10 @@ export async function rollbackVersion(body: { versionId: number }, options?: { [
 }
 
 /** 删除一个非当前版本 */
-export async function deleteVersion(body: { versionId: number }, options?: { [key: string]: any }) {
+export async function deleteVersion(
+  body: { versionId: API.SnowflakeId },
+  options?: { [key: string]: any },
+) {
   return request<BaseResponse<boolean>>('/app/version/delete', {
     method: 'POST',
     headers: {

@@ -260,17 +260,19 @@ const toggleFeatured = async (app: API.AppVO) => {
 }
 
 // 删除应用
-const deleteApp = async (id: number | undefined) => {
+// id 是雪花号字符串，原样透传（转 number 会丢精度，后端会查不到这条记录）
+const deleteApp = async (id: API.SnowflakeId | undefined) => {
   if (!id) return
 
   try {
     const res = await deleteAppByAdmin({ id })
-    if (res.data.code === 0) {
+    // code === 0 只代表请求处理完，data 才是「真的删掉了没有」
+    if (res.data.code === 0 && res.data.data) {
       message.success('删除成功')
       // 刷新数据
       fetchData()
     } else {
-      message.error('删除失败：' + res.data.message)
+      message.error('删除失败：' + (res.data.message || '后端未删除任何记录'))
     }
   } catch (error) {
     console.error('删除失败：', error)

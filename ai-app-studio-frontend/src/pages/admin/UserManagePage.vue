@@ -36,7 +36,14 @@
           {{ dayjs(record.createTime).format('YYYY-MM-DD HH:mm:ss') }}
         </template>
         <template v-else-if="column.key === 'action'">
-          <a-button danger @click="doDelete(record.id)">删除</a-button>
+          <!--
+            自己的账号不给删：删掉就立刻失去后台入口，而且这时候没有第二个账号能救。
+            后端也拦了这一条（UserService#removeUser），前端只是提前把按钮关掉，少一次无效点击。
+          -->
+          <a-tooltip v-if="record.id === loginUserStore.loginUser.id" title="不能删除当前登录的账号">
+            <a-button danger disabled>删除</a-button>
+          </a-tooltip>
+          <a-button v-else danger @click="doDelete(record)">删除</a-button>
         </template>
       </template>
     </a-table>
@@ -45,8 +52,11 @@
 <script lang="ts" setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { deleteUser, listUserVoByPage } from '@/api/userController.ts'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
+import { useLoginUserStore } from '@/stores/loginUser'
 import dayjs from 'dayjs'
+
+const loginUserStore = useLoginUserStore()
 
 const columns = [
   {
@@ -132,19 +142,38 @@ const doSearch = () => {
 }
 
 // 删除数据
-const doDelete = async (id: string) => {
-  if (!id) {
+// 用户删除是「连坐」操作：应用、对话、版本、已部署页面都会一起没，必须二次确认
+const doDelete = (record: API.UserVO) => {
+  // 雪花 id 是字符串，直接透传。⚠️ 千万不要 Number(id)：
+  // 它超出 JS 安全整数范围，转完末尾几位就变了，后端会查不到这个用户
+  // （旧代码正是这么写的，于是「提示删除成功、刷新后用户还在」）
+  const userId = record.id
+  if (!userId) {
     return
   }
-  // 表格传入的 id 是字符串，而接口声明为 number，这里显式转换
-  const res = await deleteUser({ id: Number(id) })
-  if (res.data.code === 0) {
-    message.success('删除成功')
-    // 刷新数据
-    fetchData()
-  } else {
-    message.error('删除失败')
-  }
+
+  Modal.confirm({
+    title: `删除用户「${record.userName || record.userAccount || '未命名'}」？`,
+    content: '该用户名下的应用、对话记录、版本快照，以及已部署的线上页面都会一起删除，且无法恢复。',
+    okText: '删除',
+    okType: 'danger',
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        const res = await deleteUser({ id: userId })
+        // code === 0 只代表「请求处理完了」，data 才是「真的删掉了没有」
+        if (res.data.code === 0 && res.data.data) {
+          message.success('删除成功')
+          fetchData()
+        } else {
+          message.error('删除失败：' + (res.data.message || '后端未删除任何记录'))
+        }
+      } catch (error) {
+        console.error('删除用户失败：', error)
+        message.error('删除失败')
+      }
+    },
+  })
 }
 
 // 页面加载时请求一次
