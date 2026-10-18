@@ -48,6 +48,26 @@
           {{ app.user?.userName?.trim() || (featured ? '官方' : '用户') }}
         </p>
       </div>
+      <!--
+        作品管理入口：只在自己的作品里出现。
+        精选区的卡片是别人的东西，不提供任何修改动作。
+        @click.stop 是为了将来给卡片加整卡点击时，菜单不会连带触发。
+      -->
+      <div v-if="owned" class="app-actions" @click.stop>
+        <a-dropdown :trigger="['click']" placement="bottomRight">
+          <button type="button" class="more-btn" aria-label="作品管理">⋯</button>
+          <template #overlay>
+            <a-menu @click="handleMenuClick">
+              <a-menu-item key="edit">重命名</a-menu-item>
+              <a-menu-item key="download" :disabled="app.codeReady === false">下载代码</a-menu-item>
+              <a-menu-item key="deploy">重新部署</a-menu-item>
+              <a-menu-item key="version">版本历史</a-menu-item>
+              <a-menu-divider />
+              <a-menu-item key="delete" danger>删除应用</a-menu-item>
+            </a-menu>
+          </template>
+        </a-dropdown>
+      </div>
     </div>
   </div>
 </template>
@@ -60,15 +80,23 @@ import { formatCodeGenTypeShort } from '@/utils/codeGenTypes'
 interface Props {
   app: API.AppVO
   featured?: boolean
+  /** 是否为自己的作品：只有自己的才显示「⋯」管理菜单 */
+  owned?: boolean
 }
 
 interface Emits {
   (e: 'view-chat', appId: string | number | undefined): void
   (e: 'view-work', app: API.AppVO): void
+  (e: 'edit', app: API.AppVO): void
+  (e: 'download', app: API.AppVO): void
+  (e: 'deploy', app: API.AppVO): void
+  (e: 'version', app: API.AppVO): void
+  (e: 'delete', app: API.AppVO): void
 }
 
 const props = withDefaults(defineProps<Props>(), {
   featured: false,
+  owned: false,
 })
 
 const emit = defineEmits<Emits>()
@@ -91,6 +119,32 @@ const handleViewChat = () => {
 
 const handleViewWork = () => {
   emit('view-work', props.app)
+}
+
+/**
+ * 把 a-menu 的 key 映射成独立事件
+ * <p>
+ * 父组件更愿意写 `@delete="..."` 而不是在一堆字符串 key 里 switch ——
+ * 而且事件是强类型的，改名字时 TS 会报错。
+ */
+const handleMenuClick = ({ key }: { key: string | number }) => {
+  switch (key) {
+    case 'edit':
+      emit('edit', props.app)
+      break
+    case 'download':
+      emit('download', props.app)
+      break
+    case 'deploy':
+      emit('deploy', props.app)
+      break
+    case 'version':
+      emit('version', props.app)
+      break
+    case 'delete':
+      emit('delete', props.app)
+      break
+  }
 }
 </script>
 
@@ -236,5 +290,34 @@ const handleViewWork = () => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ---------- 作品管理入口 ---------- */
+.app-actions {
+  flex-shrink: 0;
+}
+
+/* 中性色而不是品牌蓝：这是次要操作，卡片上的主行动仍然是「查看对话」 */
+.more-btn {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-3);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.more-btn:hover {
+  background: var(--bg-subtle);
+  color: var(--text-1);
 }
 </style>

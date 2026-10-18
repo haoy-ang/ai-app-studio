@@ -1,13 +1,20 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { ArrowUpOutlined } from '@ant-design/icons-vue'
 import { useLoginUserStore } from '@/stores/loginUser'
-import { addApp, listMyAppVoByPage, listGoodAppVoByPage } from '@/api/appController'
-import { getDeployUrl } from '@/config/env'
+import {
+  addApp,
+  listMyAppVoByPage,
+  listGoodAppVoByPage,
+  deployApp,
+  deleteApp,
+} from '@/api/appController'
+import { getDeployUrl, API_BASE_URL } from '@/config/env'
 import { CODE_GEN_TYPE_OPTIONS } from '@/utils/codeGenTypes'
 import AppCard from '@/components/AppCard.vue'
+import AppVersionDrawer from '@/components/AppVersionDrawer.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
 const router = useRouter()
@@ -175,6 +182,85 @@ const viewWork = (app: API.AppVO) => {
   }
 }
 
+// ==================== 作品管理 ====================
+
+// 版本历史抽屉
+const versionOpen = ref(false)
+const versionApp = ref<API.AppVO | null>(null)
+
+// 重命名：复用已有的编辑页（它只改应用名称）
+const handleEditApp = (app: API.AppVO) => {
+  if (app.id) {
+    router.push(`/app/edit/${app.id}`)
+  }
+}
+
+const handleDownloadApp = (app: API.AppVO) => {
+  if (!app.id) {
+    return
+  }
+  // 走浏览器原生下载，不走 request 封装：zip 是二进制，
+  // umi-request 会当成 JSON/text 解析，下载下来是个打不开的坏包
+  window.open(`${API_BASE_URL}/app/download/${app.id}`, '_blank')
+}
+
+// 部署可能要几分钟（Vue 项目要 npm install + build），所以给一个不会自动消失的 loading
+const handleDeployApp = async (app: API.AppVO) => {
+  if (!app.id) {
+    return
+  }
+  const hide = message.loading('部署中，Vue 工程需要构建，可能要几分钟…', 0)
+  try {
+    const res = await deployApp({ appId: Number(app.id) })
+    if (res.data.code === 0) {
+      message.success('部署成功')
+      // 部署成功会写入 deployKey，卡片上的「查看作品」要跟着出现
+      await loadMyApps()
+    } else {
+      message.error('部署失败：' + (res.data.message || '未知错误'))
+    }
+  } catch (error) {
+    console.error('部署失败：', error)
+    message.error('部署失败')
+  } finally {
+    hide()
+  }
+}
+
+const handleDeleteApp = (app: API.AppVO) => {
+  if (!app.id) {
+    return
+  }
+  Modal.confirm({
+    title: `删除「${app.appName || '未命名应用'}」？`,
+    // 把「会连坐什么」说清楚：这是不可逆操作，用户有权知道删掉了哪些东西
+    content: '对话记录、版本快照、已部署的线上页面都会一起删除，且无法恢复。',
+    okText: '删除',
+    okType: 'danger',
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        const res = await deleteApp({ id: Number(app.id) })
+        if (res.data.code === 0) {
+          message.success('已删除')
+          // 自己的作品也可能在精选位（后端已同步清掉缓存），列表要一起刷
+          await Promise.all([loadMyApps(), loadFeaturedApps()])
+        } else {
+          message.error('删除失败：' + (res.data.message || '未知错误'))
+        }
+      } catch (error) {
+        console.error('删除应用失败：', error)
+        message.error('删除失败')
+      }
+    },
+  })
+}
+
+const handleOpenVersions = (app: API.AppVO) => {
+  versionApp.value = app
+  versionOpen.value = true
+}
+
 // 页面加载时获取数据
 onMounted(() => {
   loadMyApps()
@@ -242,8 +328,14 @@ onMounted(() => {
           v-for="app in myApps"
           :key="app.id"
           :app="app"
+          owned
           @view-chat="viewChat"
           @view-work="viewWork"
+          @edit="handleEditApp"
+          @download="handleDownloadApp"
+          @deploy="handleDeployApp"
+          @version="handleOpenVersions"
+          @delete="handleDeleteApp"
         />
       </div>
       <EmptyState
@@ -292,6 +384,9 @@ onMounted(() => {
         />
       </div>
     </section>
+
+    <!-- 版本历史抽屉：挂在页面根节点上，不跟随卡片生命周期 -->
+    <AppVersionDrawer v-model:open="versionOpen" :app="versionApp" @changed="loadMyApps" />
   </div>
 </template>
 
