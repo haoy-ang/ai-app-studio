@@ -8,6 +8,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Scope;
 
+import java.util.Map;
+
 /**
  * 通用流式模型配置（HTML / 多文件用）
  * <p>
@@ -46,6 +48,15 @@ public class StreamingChatModelConfig {
     private Double temperature;
 
     /**
+     * 额外请求头，从 yml 的 {@code custom-headers} 读
+     * <p>
+     * 目前只用它传 {@code Accept-Encoding: identity}，原因见 {@code application.yml}
+     * 里那段注释 —— 一句话：让上游别压缩，绕开 Spring RestClient + Apache HttpClient 5
+     * 解压 chunked 响应时只读到 1 个字节的坑。不填不会影响启动。
+     */
+    private Map<String, String> customHeaders;
+
+    /**
      * 通用流式模型（多例）
      * <p>
      * ⚠️ 调用方必须用 {@code ObjectProvider#getObject()} 取，每次都是新实例。
@@ -54,12 +65,15 @@ public class StreamingChatModelConfig {
     @Bean("streamingChatModelPrototype")
     @Scope("prototype")
     public StreamingChatModel streamingChatModelPrototype() {
+        // yml 里没配 custom-headers 时给个空 Map：部分 builder 对 null 会直接 NPE
+        Map<String, String> headers = customHeaders == null ? Map.of() : customHeaders;
         return OpenAiStreamingChatModel.builder()
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
                 .modelName(modelName)
                 .maxTokens(maxTokens)
                 .temperature(temperature)
+                .customHeaders(headers)
                 .build();
     }
 }

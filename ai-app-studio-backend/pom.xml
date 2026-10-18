@@ -126,6 +126,9 @@
 			<groupId>dev.langchain4j</groupId>
 			<artifactId>langchain4j-open-ai-spring-boot-starter</artifactId>
 			<version>1.1.0-beta7</version>
+			<!-- ⚠️ 不要排除它传递进来的 langchain4j-http-client-spring-restclient：
+				 starter 的 AutoConfig 在字节码里直接引用了 SpringRestClient 类，排掉就是 NoClassDefFoundError。
+				 改用 com.haoy.aiapp.config.HttpClientConfig 把底层请求工厂钉死成 JDK HttpClient。 -->
 		</dependency>
 		<!-- LangChain4j Community Redis 启动器（Redis 向量库 / 聊天记忆存储） -->
 		<dependency>

@@ -9,6 +9,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.Map;
+
 /**
  * AI 代码生成类型路由服务工厂
  * <p>
@@ -33,6 +35,15 @@ import org.springframework.context.annotation.Configuration;
 @Slf4j
 @Configuration
 public class AiCodeGenTypeRoutingServiceFactory {
+
+    /**
+     * 要求上游返回不压缩的响应体
+     * <p>
+     * 这不是「优化」，是绕坑：Spring {@code RestClient} 自动选中的 Apache HttpClient 5
+     * 在解压这类 chunked 响应时会截断（实测 body 只剩 {@code "{"}）。
+     * 详见下面 {@code buildService} 里的注释。
+     */
+    private static final Map<String, String> ACCEPT_IDENTITY = Map.of("Accept-Encoding", "identity");
 
     /**
      * 路由专用模型（阿里云百炼 OpenAI 兼容层）的连接信息
@@ -98,7 +109,36 @@ public class AiCodeGenTypeRoutingServiceFactory {
             useApiKey = fallbackApiKey;
             useModelName = fallbackModelName;
         }
-        // 单独构建一个不带 JSON 约束的轻量模型，只用于路由
+        return buildService(useBaseUrl, useApiKey, useModelName);
+    }
+
+    /**
+     * 创建<b>备用</b>路由服务：固定用主链路的模型（{@code langchain4j.open-ai.chat-model}）
+     * <p>
+     * <b>它什么时候派上用场：</b>主路由模型（百炼 qwen-turbo）返回 429 / 超时的时候。
+     * 那种情况下模型<b>根本没机会判断</b>，直接退回 HTML 会让用户拿到错误形态的产物 ——
+     * 换成主链路模型再判一次，多数时候能救回来（实测百炼限流时 deepseek 是好的）。
+     * <p>
+     * <b>为什么不复用全局 {@code ChatModel} Bean：</b>那个 Bean 开了
+     * {@code response-format: json_object} + {@code strict-json-schema}，
+     * 而路由的返回类型是枚举、提示词里也没有 "json" 字样，DeepSeek 会直接 400。
+     * 所以这里必须新建一个「不带 JSON 约束」的模型实例。
+     * <p>
+     * 代价说明：每次启动多建一个模型客户端（纯内存对象，不联网），每次降级多一次调用。
+     * 相对于「产出错误类型的应用」，这个代价可以忽略。
+     *
+     * @return 备用路由服务实例
+     */
+    public AiCodeGenTypeRoutingService createFallbackRoutingService() {
+        return buildService(fallbackBaseUrl, fallbackApiKey, fallbackModelName);
+    }
+
+    /**
+     * 按给定连接信息造一个路由服务
+     * <p>
+     * 单独构建一个不带 JSON 约束的轻量模型，只用于路由。
+     */
+    private AiCodeGenTypeRoutingService buildService(String useBaseUrl, String useApiKey, String useModelName) {
         ChatModel routingChatModel = OpenAiChatModel.builder()
                 .baseUrl(useBaseUrl)
                 .apiKey(useApiKey)
@@ -107,6 +147,14 @@ public class AiCodeGenTypeRoutingServiceFactory {
                 .maxRetries(maxRetries)
                 .logRequests(true)
                 .logResponses(true)
+                // ⚠️ 必须带这个头，否则路由必然 JsonEOFException（实测 2026-10-18）。
+                // 链路是 langchain4j SpringRestClient → Spring RestClient → 自动选中 Apache HttpClient 5
+                // （classpath 上被 webdrivermanager 拖进来了），它在这条 CDN 的
+                // 「vary: accept-encoding + Transfer-Encoding: chunked」响应上解压会截断，
+                // 只读到第一个字节 "{"。同一个请求：裸 HC5 → 454 字节，Spring+HC5 → 1 字节，
+                // Spring+HC5 加 identity → 454 字节。所以不是客户端选错，是别让上游压缩。
+                // 全局模型（starter 的 chat-model / 流式）在 application.yml 的 custom-headers 里配同一项。
+                .customHeaders(ACCEPT_IDENTITY)
                 .build();
         return AiServices.builder(AiCodeGenTypeRoutingService.class)
                 .chatModel(routingChatModel)

@@ -28,6 +28,33 @@ spring:
     url: jdbc:mysql://localhost:3306/ai_app_studio?useSSL=false&serverTimezone=UTC
     username: root
     password: 123456
+# ==================== AI 模型的公共行为 ====================
+# ⚠️ Accept-Encoding: identity 不是优化项，是绕坑项（2026-10-18 实测）。
+#
+# 现象：所有「非流式」调用（智能路由、图片收集、代码质量检查）都抛
+#   JsonEOFException: Unexpected end-of-input（源码里 body 就剩一个 "{"）。
+# 排查（每层都单独写了探针验证，结论违反直觉）：
+#   1. 同一请求 curl → 454 字节完整；裸 java.net.http.HttpClient → 完整；
+#   2. langchain4j SpringRestClient → 1 字节；
+#   3. 裸 Spring RestClient.builder().build() → 也是 1 字节（所以跟 langchain4j 无关）；
+#   4. 裸 Apache HttpClient 5 → 454 字节完整（所以也不是 HC5 本身的锅）；
+#   5. Spring RestClient + HC5 工厂 → 1 字节，加上 Accept-Encoding: identity → 454 字节。
+# 结论：Spring 的 HttpComponents 工厂在解压这条 CDN 的
+#   「vary: accept-encoding + Transfer-Encoding: chunked」响应时会截断。
+#   HC5 是被 webdrivermanager 间接拖进 classpath 的，Spring 按 classpath 自动选中它。
+#
+# 修法选择：不去 pom 里排 httpclient5（那会让截图功能依赖的 webdrivermanager 缺类），
+#   也不换 langchain4j 的客户端实现（其 SpringRestClient 构造时会无条件覆盖请求工厂，
+#   换了也没用），而是让上游干脆别压缩 —— AI 的 JSON 响应本来就小，压缩省不了什么。
+langchain4j:
+  open-ai:
+    chat-model:
+      custom-headers:
+        Accept-Encoding: identity
+    streaming-chat-model:
+      custom-headers:
+        Accept-Encoding: identity
+
 server:
   port: 8123
   servlet:

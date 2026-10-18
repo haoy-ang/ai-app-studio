@@ -8,6 +8,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Scope;
 
+import java.util.Map;
+
 /**
  * 推理流式模型配置（复杂工程代码生成用，带工具调用能力）
  * <p>
@@ -39,6 +41,13 @@ public class ReasoningStreamingChatModelConfig {
     private String apiKey;
 
     /**
+     * 额外请求头，从 yml 的 {@code custom-headers} 读（前缀与上面一致，复用 chat-model 段）
+     * <p>
+     * 目前只用它传 {@code Accept-Encoding: identity}，原因见 {@code application.yml} 里的说明。
+     */
+    private Map<String, String> customHeaders;
+
+    /**
      * 推理流式模型（用于复杂项目生成，如 Vue，带工具调用）
      * <p>
      * ⚠️ {@code prototype} 是本方法的核心：它是「多例」真正生效的地方。
@@ -62,8 +71,11 @@ public class ReasoningStreamingChatModelConfig {
                 .baseUrl(baseUrl)
                 .modelName(modelName)
                 .maxTokens(maxTokens)
-                .logRequests(true)
-                .logResponses(true)
+                // ⚠️ 刻意<b>不</b>开 logRequests / logResponses：
+                // 日志开关统一交给 starter 注册的那个单例（它读 yml 的 log-requests），
+                // 这里再开一遍会重复打印，而且这是 prototype —— 一旦上线，每次生成的
+                // 完整 prompt 都会被刷进日志（含用户输入，等于把用户内容留档）。
+                .customHeaders(customHeaders == null ? Map.of() : customHeaders)
                 .build();
     }
 }
