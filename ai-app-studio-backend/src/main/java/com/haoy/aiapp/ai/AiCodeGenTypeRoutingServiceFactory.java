@@ -52,6 +52,16 @@ public class AiCodeGenTypeRoutingServiceFactory {
     private Integer maxTokens;
 
     /**
+     * 调用失败的重试次数
+     * <p>
+     * <b>这个值只能兜住瞬时抖动，别指望它解决限流。</b>百炼返回的 429 是
+     * {@code limit_requests}（每分钟请求数超限），重试 3 次如果还落在同一分钟内，照样全失败。
+     * 真正要控的是「调用频率」—— 见 {@link #createAiCodeGenTypeRoutingService()} 上方的说明。
+     */
+    @Value("${langchain4j.open-ai.routing-chat-model.max-retries:3}")
+    private Integer maxRetries;
+
+    /**
      * 降级用的连接信息（全局 chat-model，即 DeepSeek）。
      * <p>
      * 为什么需要降级：百炼 Key 是「后填」的，如果在没填 Key 时就因为
@@ -94,6 +104,7 @@ public class AiCodeGenTypeRoutingServiceFactory {
                 .apiKey(useApiKey)
                 .modelName(useModelName)
                 .maxTokens(maxTokens)
+                .maxRetries(maxRetries)
                 .logRequests(true)
                 .logResponses(true)
                 .build();
