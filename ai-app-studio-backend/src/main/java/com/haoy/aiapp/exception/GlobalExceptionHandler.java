@@ -14,6 +14,7 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -43,6 +44,21 @@ import java.util.Map;
 @RestControllerAdvice
 @Hidden
 public class GlobalExceptionHandler {
+
+    /**
+     * 需要按 SSE 格式回写错误的接口路径
+     * <p>
+     * <b>为什么要把路径列出来、而不是只靠 {@code Accept} 头判断？</b>
+     * 因为 {@code Accept} 是<b>客户端</b>给的，curl / Postman / 部分 fetch 调用默认都不带
+     * {@code text/event-stream}。而这些接口上的 {@code @AuthCheck} / {@code @RateLimit} 切面
+     * 是在方法体<b>之前</b>抛异常的 —— 此时响应头已经被 {@code produces} 定成事件流，
+     * 如果按 JSON 回写，调用方会拿到一个「声称是事件流、实际是 JSON」的响应，谁都解析不了。
+     * <p>
+     * ⚠️ 新增 SSE 接口时必须往这里加一条，否则该接口的鉴权/限流失败会退化成上面那种四不像响应。
+     */
+    private static final List<String> SSE_URI_PATTERNS = List.of(
+            "/chat/gen/code",
+            "/workflow/execute-flux");
 
     /**
      * 处理业务异常
@@ -121,7 +137,7 @@ public class GlobalExceptionHandler {
         String accept = request.getHeader("Accept");
         String uri = request.getRequestURI();
         boolean isSse = (accept != null && accept.contains("text/event-stream"))
-                || (uri != null && uri.contains("/chat/gen/code"));
+                || (uri != null && SSE_URI_PATTERNS.stream().anyMatch(uri::contains));
         if (!isSse) {
             return false;
         }

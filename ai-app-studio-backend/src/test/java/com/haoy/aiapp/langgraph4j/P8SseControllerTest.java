@@ -4,7 +4,9 @@ import com.haoy.aiapp.config.AsyncRequestConfig;
 import com.haoy.aiapp.controller.WorkflowSseController;
 import com.haoy.aiapp.core.builder.VueProjectBuilder;
 import com.haoy.aiapp.exception.BusinessException;
+import com.haoy.aiapp.model.entity.App;
 import com.haoy.aiapp.model.enums.CodeGenTypeEnum;
+import com.haoy.aiapp.service.app.AppService;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -27,7 +29,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * P8 测试 —— <b>SSE 流式输出</b>
@@ -66,6 +70,18 @@ class P8SseControllerTest {
     }
 
     /**
+     * 造一个「appId 校验能过」的控制器
+     * <p>
+     * 控制器现在会校验 appId 指向的应用真实存在（为了关掉 {@code appId=0} 那个多人共写同一目录的后门），
+     * 所以这里把 AppService 打桩成「查得到」。本类测的是 SSE 文本透传，不关心应用本身是什么。
+     */
+    private static WorkflowSseController controllerWithStubApp() {
+        AppService appService = mock(AppService.class);
+        when(appService.getById(anyLong())).thenReturn(new App());
+        return new WorkflowSseController(stubWorkflow(), appService);
+    }
+
+    /**
      * 事件序列：开头是 start、结尾是 completed，中间每个执行的节点各推一次进度。
      * <p>
      * HTML 类型下实际执行 5 个节点（图片收集 / 提示词增强 / 智能路由 / 代码生成 / 代码质检），
@@ -98,7 +114,7 @@ class P8SseControllerTest {
      */
     @Test
     void controllerShouldPassPreformattedSseThroughVerbatim() throws Exception {
-        WorkflowSseController controller = new WorkflowSseController(stubWorkflow());
+        WorkflowSseController controller = controllerWithStubApp();
 
         ResponseEntity<StreamingResponseBody> response = controller.executeWorkflowFlux("做一个技术博客", 990301L);
 
@@ -132,7 +148,7 @@ class P8SseControllerTest {
      */
     @Test
     void controllerShouldRejectBlankPrompt() {
-        WorkflowSseController controller = new WorkflowSseController(stubWorkflow());
+        WorkflowSseController controller = controllerWithStubApp();
         assertThrows(BusinessException.class, () -> controller.executeWorkflowFlux("   ", 1L));
     }
 

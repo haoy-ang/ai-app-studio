@@ -1,9 +1,14 @@
 package com.haoy.aiapp.controller;
 
 import cn.hutool.core.util.StrUtil;
+import com.haoy.aiapp.annotation.AuthCheck;
+import com.haoy.aiapp.constant.UserConstant;
 import com.haoy.aiapp.exception.ErrorCode;
 import com.haoy.aiapp.exception.ThrowUtils;
 import com.haoy.aiapp.langgraph4j.CodeGenWorkflow;
+import com.haoy.aiapp.ratelimit.annotation.RateLimit;
+import com.haoy.aiapp.ratelimit.enums.RateLimitType;
+import com.haoy.aiapp.service.app.AppService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
@@ -46,8 +51,17 @@ import java.util.Iterator;
  * <b>为什么要 flush？</b> SSE 的全部价值就在于「实时」。不 flush 的话字节会先攒在缓冲区里，
  * 用户看到的不是逐步进度，而是「卡半天然后一次全出来」。
  * <p>
- * ⚠️ 这是一个<b>演示/调试用</b>接口：它不做登录校验，一次调用就会真的跑完整条 AI 生成流水线
- * （要花钱、要几十秒）。正式产品里应当把它挂到 {@code @AuthCheck} 下面、并带上真实 appId。
+ * <b>⚠️ 这是一个调试接口，一次调用会真的跑完整条 AI 生成流水线（花钱、几十秒）。</b>
+ * 它曾经完全没有防护：任何人只要能访问到地址，就能匿名把账号余额刷光。现在有三道闸：
+ * <ol>
+ *   <li>{@link AuthCheck} —— 必须登录且是管理员。注意这个切面在<b>方法体之前</b>抛异常，
+ *       所以拒绝走的是 {@code GlobalExceptionHandler}，那条路必须能回写成 SSE 事件，
+ *       否则前端只会看到一个笼统的「连接错误」（判据见 {@code handleSseError}）；</li>
+ *   <li>{@link RateLimit} —— 按用户每分钟 2 次。管理员也会手滑连点；</li>
+ *   <li>{@code appId} 必填且必须真实存在 —— 关掉原来「传 0 就脱离业务流程、产物落到
+ *       {@code {type}_0}」的后门。那个后门在单人本机开发时无害，一旦部署就是多人共写同一个目录、
+ *       互相覆盖产物，而且覆盖了还看不出来。</li>
+ * </ol>
  *
  * @author <a>程序员haoy</a>
  */
@@ -62,25 +76,37 @@ public class WorkflowSseController {
      */
     private final CodeGenWorkflow codeGenWorkflow;
 
-    public WorkflowSseController(@Qualifier("codeGenWorkflow") CodeGenWorkflow codeGenWorkflow) {
+    /**
+     * 只用来校验 appId 指向的应用真实存在，避免往一个不存在的目录里写产物
+     */
+    private final AppService appService;
+
+    public WorkflowSseController(@Qualifier("codeGenWorkflow") CodeGenWorkflow codeGenWorkflow,
+                                 AppService appService) {
         this.codeGenWorkflow = codeGenWorkflow;
+        this.appService = appService;
     }
 
     /**
      * 执行代码生成工作流并以 SSE 推送进度
      *
      * @param prompt 用户需求，如「做一个个人博客」
-     * @param appId  应用 ID；不传或传 0 表示脱离业务流程单独跑（产物落到 {@code {codeType}_0}）
+     * @param appId  应用 ID；必须是当前库里真实存在的应用（不再接受 0）
      * @return SSE 响应（事件：{@code workflow_start} / {@code step_completed} / {@code workflow_completed} / {@code workflow_error}）
      */
     @GetMapping(value = "/execute-flux", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
+    @RateLimit(limitType = RateLimitType.USER, rate = 2, rateInterval = 60,
+            message = "工作流调试请求过于频繁，请稍后再试")
     public ResponseEntity<StreamingResponseBody> executeWorkflowFlux(
             @RequestParam("prompt") String prompt,
-            @RequestParam(value = "appId", required = false) Long appId) {
+            @RequestParam("appId") Long appId) {
         ThrowUtils.throwIf(StrUtil.isBlank(prompt), ErrorCode.PARAMS_ERROR, "需求不能为空");
-        Long effectiveAppId = appId == null ? 0L : appId;
+        ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR,
+                "appId 必须是真实的已有应用，不再支持传 0 脱离业务流程");
+        ThrowUtils.throwIf(appService.getById(appId) == null, ErrorCode.NOT_FOUND_ERROR, "应用不存在");
 
-        Flux<String> eventFlux = codeGenWorkflow.executeWorkflowWithFlux(prompt, effectiveAppId);
+        Flux<String> eventFlux = codeGenWorkflow.executeWorkflowWithFlux(prompt, appId);
         StreamingResponseBody responseBody = outputStream -> writeEvents(eventFlux, outputStream);
 
         return ResponseEntity.ok()
