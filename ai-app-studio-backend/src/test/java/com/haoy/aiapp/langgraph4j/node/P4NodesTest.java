@@ -28,12 +28,14 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -154,6 +156,70 @@ class P4NodesTest {
                 WorkflowContext.builder().originalPrompt("随便做点啥").build());
 
         assertEquals(CodeGenTypeEnum.HTML, context.getGenerationType());
+        // 降级必须留痕：否则报告里「类型不对」会被误读成「模型判断力差」
+        assertEquals(Boolean.TRUE, context.getRoutingDegraded());
+    }
+
+    /**
+     * 主路由模型被限流时，不能直接退回 HTML —— 换备用模型再判一次。
+     * <p>
+     * 这条是实测倒逼出来的：百炼 qwen-turbo 返回 429 时，直接退回 HTML
+     * 会让「要 Vue 后台」的请求变成一张 HTML 页，用户完全看不出是限流造成的。
+     */
+    @Test
+    void routerShouldUseFallbackModelWhenPrimaryFails() {
+        AiCodeGenTypeRoutingService primary = mock(AiCodeGenTypeRoutingService.class);
+        when(primary.routeCodeGenType(anyString()))
+                .thenThrow(new RuntimeException("429 Too Many Requests: limit_requests"));
+
+        AiCodeGenTypeRoutingService fallback = mock(AiCodeGenTypeRoutingService.class);
+        when(fallback.routeCodeGenType(anyString())).thenReturn(CodeGenTypeEnum.VUE_PROJECT);
+
+        WorkflowContext context = run(RouterNode.create(primary, fallback),
+                WorkflowContext.builder().originalPrompt("做个后台管理界面，三个页面，需要路由跳转").build());
+
+        assertEquals(CodeGenTypeEnum.VUE_PROJECT, context.getGenerationType(),
+                "备用模型判出来了就该用它，而不是退回 HTML");
+        assertEquals(Boolean.TRUE, context.getRoutingDegraded(), "用了备用模型也算降级，必须留痕");
+        assertTrue(context.getRoutingDegradeReason().contains("429"),
+                "降级原因里要能看出是限流：" + context.getRoutingDegradeReason());
+    }
+
+    /**
+     * 主、备都失败才退回 HTML，且原因里要能同时看到两边
+     */
+    @Test
+    void routerShouldFallBackToHtmlOnlyWhenBothModelsFail() {
+        AiCodeGenTypeRoutingService primary = mock(AiCodeGenTypeRoutingService.class);
+        when(primary.routeCodeGenType(anyString())).thenThrow(new RuntimeException("429 主模型限流"));
+        AiCodeGenTypeRoutingService fallback = mock(AiCodeGenTypeRoutingService.class);
+        when(fallback.routeCodeGenType(anyString())).thenThrow(new RuntimeException("timeout 备用模型超时"));
+
+        WorkflowContext context = run(RouterNode.create(primary, fallback),
+                WorkflowContext.builder().originalPrompt("做个博客").build());
+
+        assertEquals(CodeGenTypeEnum.HTML, context.getGenerationType());
+        assertEquals(Boolean.TRUE, context.getRoutingDegraded());
+        assertTrue(context.getRoutingDegradeReason().contains("429")
+                        && context.getRoutingDegradeReason().contains("timeout"),
+                "两个模型的失败原因都要留下，否则排查时不知道换哪家：" + context.getRoutingDegradeReason());
+    }
+
+    /**
+     * 主模型正常时不能调用备用模型 —— 否则每个请求都多付一次调用
+     */
+    @Test
+    void routerShouldNotCallFallbackWhenPrimarySucceeds() {
+        AiCodeGenTypeRoutingService primary = mock(AiCodeGenTypeRoutingService.class);
+        when(primary.routeCodeGenType(anyString())).thenReturn(CodeGenTypeEnum.MULTI_FILE);
+        AiCodeGenTypeRoutingService fallback = mock(AiCodeGenTypeRoutingService.class);
+
+        WorkflowContext context = run(RouterNode.create(primary, fallback),
+                WorkflowContext.builder().originalPrompt("做成三个文件").build());
+
+        assertEquals(CodeGenTypeEnum.MULTI_FILE, context.getGenerationType());
+        assertNull(context.getRoutingDegraded(), "没降级就不该有标记");
+        verifyNoInteractions(fallback);
     }
 
     // ==================== 代码生成 ====================

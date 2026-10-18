@@ -60,6 +60,23 @@ public record EvalReport(String runId, Instant startedAt, List<CaseResult> cases
         return (double) cases.stream().filter(CaseResult::routingCorrect).count() / cases.size();
     }
 
+    /**
+     * 路由降级的条数（被上游限流/超时打断，模型没机会判断）
+     * <p>
+     * 它必须和 {@link #routingAccuracy()} 一起看：降级率高的时候，路由准确率是个假数字 ——
+     * 分子分母里混了一堆「根本没答」的样本。
+     */
+    public long routingDegradedCount() {
+        return cases.stream().filter(CaseResult::routingDegraded).count();
+    }
+
+    /**
+     * 真正判错的条数（排除降级）
+     */
+    public long routingMisjudgedCount() {
+        return cases.stream().filter(CaseResult::routingMisjudged).count();
+    }
+
     public long totalDurationMs() {
         return cases.stream().mapToLong(CaseResult::durationMs).sum();
     }
@@ -81,6 +98,8 @@ public record EvalReport(String runId, Instant startedAt, List<CaseResult> cases
         root.set("startedAt", startedAt == null ? null : startedAt.toString());
         root.set("passRate", passRate());
         root.set("routingAccuracy", routingAccuracy());
+        root.set("routingDegradedCount", routingDegradedCount());
+        root.set("routingMisjudgedCount", routingMisjudgedCount());
         root.set("totalDurationMs", totalDurationMs());
 
         JSONArray array = new JSONArray();
@@ -91,6 +110,8 @@ public record EvalReport(String runId, Instant startedAt, List<CaseResult> cases
             item.set("actualType", c.actualType() == null ? null : c.actualType().getValue());
             item.set("passed", c.passed());
             item.set("routingCorrect", c.routingCorrect());
+            item.set("routingDegraded", c.routingDegraded());
+            item.set("routingDegradeReason", c.routingDegradeReason());
             item.set("durationMs", c.durationMs());
             item.set("error", c.error());
             item.set("failures", c.failureSummary());
@@ -114,6 +135,11 @@ public record EvalReport(String runId, Instant startedAt, List<CaseResult> cases
         sb.append(String.format("- 通过率：%d/%d（%.1f%%）%n",
                 passedCount(), cases.size(), passRate() * 100));
         sb.append(String.format("- 路由准确率：%.1f%%%n", routingAccuracy() * 100));
+        long degraded = routingDegradedCount();
+        if (degraded > 0) {
+            sb.append("- ⚠ 路由降级：").append(degraded).append(" 条（上游限流/超时，模型没机会判断）")
+                    .append("，真正判错 ").append(routingMisjudgedCount()).append(" 条\n");
+        }
         sb.append("- 总耗时：").append(humanDuration(totalDurationMs()))
                 .append("（平均 ").append(avgDurationMs()).append(" ms/条）\n\n");
 
@@ -126,6 +152,9 @@ public record EvalReport(String runId, Instant startedAt, List<CaseResult> cases
         for (CaseResult c : cases) {
             String routing = c.routingCorrect() ? "✓" : "✗（期望 " + typeOf(c.expectedType())
                     + "，实际 " + typeOf(c.actualType()) + "）";
+            if (c.routingDegraded()) {
+                routing = "⚠ 降级（" + typeOf(c.actualType()) + "）";
+            }
             String failures = c.failureSummary().isEmpty() ? "-" : String.join("; ", c.failureSummary());
             sb.append("| ").append(c.caseId())
                     .append(" | ").append(routing)
@@ -134,6 +163,12 @@ public record EvalReport(String runId, Instant startedAt, List<CaseResult> cases
                     .append(" | ").append(failures)
                     .append(" |\n");
         }
+
+        // 降级原因单独列：它属于「环境问题」，不该混在产物质量里
+        cases.stream().filter(CaseResult::routingDegraded).forEach(c ->
+                sb.append("\n- `").append(c.caseId()).append("` 降级原因：")
+                        .append(c.routingDegradeReason() == null ? "(未记录)" : c.routingDegradeReason())
+                        .append('\n'));
         return sb.toString();
     }
 

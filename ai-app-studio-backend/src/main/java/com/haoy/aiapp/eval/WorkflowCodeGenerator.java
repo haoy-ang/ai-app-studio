@@ -58,7 +58,14 @@ public class WorkflowCodeGenerator implements CodeGenerator {
             if (context.getGeneratedCodeDir() == null) {
                 return Generated.failed("工作流没有产出代码目录");
             }
-            return Generated.ok(context.getGenerationType(), Path.of(context.getGeneratedCodeDir()));
+            // 降级信息必须往上传：路由被 429 打断时产物类型会是兜底的 HTML，
+            // 报告里如果只看到「类型不对」而看不到「为什么不对」，就会误判成模型能力问题
+            boolean degraded = Boolean.TRUE.equals(context.getRoutingDegraded());
+            if (degraded) {
+                log.warn("用例 {} 的路由发生了降级: {}", evalCase.id(), context.getRoutingDegradeReason());
+            }
+            return Generated.ok(context.getGenerationType(), Path.of(context.getGeneratedCodeDir()),
+                    degraded, context.getRoutingDegradeReason());
         } catch (Exception e) {
             // 不往上抛：一条用例炸了不该中断整轮，另外 23 条的钱已经花了
             log.warn("用例 {} 生成失败: {}", evalCase.id(), e.getMessage());

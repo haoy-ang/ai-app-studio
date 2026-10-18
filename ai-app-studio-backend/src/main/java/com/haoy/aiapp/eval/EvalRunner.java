@@ -125,7 +125,8 @@ public final class EvalRunner {
 
         if (!generated.succeeded()) {
             return new CaseResult(evalCase.id(), evalCase.expectedType(), generated.actualType(),
-                    generated.artifactDir(), List.of(), List.of(), duration, generated.error());
+                    generated.artifactDir(), List.of(), List.of(), duration, generated.error(),
+                    generated.routingDegraded(), generated.routingDegradeReason());
         }
 
         // 用「实际类型」选检查器：产物是什么就该按什么标准检查，而不是按你希望它是什么
@@ -135,7 +136,8 @@ public final class EvalRunner {
         List<String> caseFailures = checkCaseAssertions(evalCase, generated.artifactDir());
 
         return new CaseResult(evalCase.id(), evalCase.expectedType(), generated.actualType(),
-                generated.artifactDir(), checks, caseFailures, duration, null);
+                generated.artifactDir(), checks, caseFailures, duration, null,
+                generated.routingDegraded(), generated.routingDegradeReason());
     }
 
     /**

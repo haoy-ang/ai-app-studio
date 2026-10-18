@@ -226,6 +226,28 @@ class EvalRunnerTest {
         assertThat(report.avgDurationMs()).isZero();
     }
 
+    @Test
+    @DisplayName("路由降级：算「没跑成」而不是「判错了」，两者必须分开统计")
+    void routingDegradedIsTrackedSeparatelyFromMisjudgement() {
+        // 两条用例：一条降级成 HTML（期望 Vue），一条是模型真的判错（期望 Vue，给了 HTML 且没降级）
+        CodeGenerator generator = (evalCase, appId) -> "degraded".equals(evalCase.id())
+                ? CodeGenerator.Generated.ok(CodeGenTypeEnum.HTML, fixture("html-good"), true,
+                        "主路由模型失败，已用备用模型判断：429 Too Many Requests")
+                : CodeGenerator.Generated.ok(CodeGenTypeEnum.HTML, fixture("html-good"));
+
+        EvalReport report = runner(generator).run(List.of(
+                aCase("degraded", CodeGenTypeEnum.VUE_PROJECT),
+                aCase("misjudged", CodeGenTypeEnum.VUE_PROJECT)));
+
+        assertThat(report.routingDegradedCount()).isEqualTo(1);
+        assertThat(report.routingMisjudgedCount()).as("只有没降级的那条才算判错").isEqualTo(1);
+
+        String markdown = report.toMarkdown(null);
+        assertThat(markdown)
+                .contains("路由降级：1 条")
+                .contains("429 Too Many Requests");
+    }
+
     /**
      * 构造一条只有通过状态、没有明细的 CaseResult
      */

@@ -2,6 +2,7 @@ package com.haoy.aiapp.langgraph4j;
 
 import cn.hutool.json.JSONUtil;
 import com.haoy.aiapp.ai.AiCodeGenTypeRoutingService;
+import com.haoy.aiapp.ai.AiCodeGenTypeRoutingServiceFactory;
 import com.haoy.aiapp.core.AiCodeGeneratorFacade;
 import com.haoy.aiapp.core.builder.VueProjectBuilder;
 import com.haoy.aiapp.exception.BusinessException;
@@ -24,6 +25,7 @@ import org.bsc.langgraph4j.StateGraph;
 import org.bsc.langgraph4j.action.AsyncNodeAction;
 import org.bsc.langgraph4j.prebuilt.MessagesState;
 import org.bsc.langgraph4j.prebuilt.MessagesStateGraph;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
@@ -83,22 +85,69 @@ public class CodeGenWorkflow {
 
     private final AiCodeGenTypeRoutingService aiCodeGenTypeRoutingService;
 
+    /**
+     * 备用路由服务 —— 主路由模型被限流 / 超时时接手判断
+     * <p>
+     * 为 null 表示只有主模型（单元测试里常见），此时路由失败会直接退回 HTML。
+     */
+    private final AiCodeGenTypeRoutingService fallbackRoutingService;
+
     private final AiCodeGeneratorFacade aiCodeGeneratorFacade;
 
     private final CodeQualityCheckService codeQualityCheckService;
 
     private final VueProjectBuilder vueProjectBuilder;
 
+    /**
+     * 生产用构造器：备用路由服务从工厂现取
+     * <p>
+     * 之所以传工厂而不是直接注第二个 {@code AiCodeGenTypeRoutingService}：容器里两个同类型 Bean
+     * 会让「按类型注入」出现歧义。工厂是 {@code @Configuration}，注入它没有这个问题。
+     *
+     * @param routingServiceFactory 路由服务工厂
+     */
+    @Autowired
+    public CodeGenWorkflow(ImageCollectionService imageCollectionService,
+                           AiCodeGenTypeRoutingService aiCodeGenTypeRoutingService,
+                           AiCodeGeneratorFacade aiCodeGeneratorFacade,
+                           CodeQualityCheckService codeQualityCheckService,
+                           VueProjectBuilder vueProjectBuilder,
+                           AiCodeGenTypeRoutingServiceFactory routingServiceFactory) {
+        this(imageCollectionService, aiCodeGenTypeRoutingService, aiCodeGeneratorFacade,
+                codeQualityCheckService, vueProjectBuilder, routingServiceFactory.createFallbackRoutingService());
+    }
+
+    /**
+     * 测试用构造器：只有主路由模型，失败直接退回 HTML
+     * <p>
+     * 保留它是为了让既有的确定性测试不必关心「降级」这件事 ——
+     * 降级逻辑在 {@code RouterNode} 里单独测，见 {@code RouterNodeFallbackTest}。
+     */
     public CodeGenWorkflow(ImageCollectionService imageCollectionService,
                            AiCodeGenTypeRoutingService aiCodeGenTypeRoutingService,
                            AiCodeGeneratorFacade aiCodeGeneratorFacade,
                            CodeQualityCheckService codeQualityCheckService,
                            VueProjectBuilder vueProjectBuilder) {
+        // 这里的 null 必须强转：两个 6 参构造器只差最后一个参数的类型，不转编译器分不出来
+        this(imageCollectionService, aiCodeGenTypeRoutingService, aiCodeGeneratorFacade,
+                codeQualityCheckService, vueProjectBuilder, (AiCodeGenTypeRoutingService) null);
+    }
+
+    /**
+     * 真正的赋值处 —— 上面两个构造器都会被落到这里
+     */
+    private CodeGenWorkflow(ImageCollectionService imageCollectionService,
+                            AiCodeGenTypeRoutingService aiCodeGenTypeRoutingService,
+                            AiCodeGeneratorFacade aiCodeGeneratorFacade,
+                            CodeQualityCheckService codeQualityCheckService,
+                            VueProjectBuilder vueProjectBuilder,
+                            AiCodeGenTypeRoutingService fallbackRoutingService) {
         this.imageCollectionService = imageCollectionService;
         this.aiCodeGenTypeRoutingService = aiCodeGenTypeRoutingService;
         this.aiCodeGeneratorFacade = aiCodeGeneratorFacade;
         this.codeQualityCheckService = codeQualityCheckService;
         this.vueProjectBuilder = vueProjectBuilder;
+        this.fallbackRoutingService = fallbackRoutingService;
     }
 
     /**
@@ -122,7 +171,7 @@ public class CodeGenWorkflow {
             CompiledGraph<MessagesState<String>> compiledGraph = new MessagesStateGraph<String>()
                     .addNode(WorkflowNodeNames.IMAGE_COLLECTOR, createImageCollectorNode())
                     .addNode(WorkflowNodeNames.PROMPT_ENHANCER, PromptEnhancerNode.create())
-                    .addNode(WorkflowNodeNames.ROUTER, RouterNode.create(aiCodeGenTypeRoutingService))
+                    .addNode(WorkflowNodeNames.ROUTER, RouterNode.create(aiCodeGenTypeRoutingService, fallbackRoutingService))
                     .addNode(WorkflowNodeNames.CODE_GENERATOR, CodeGeneratorNode.create(aiCodeGeneratorFacade))
                     .addNode(WorkflowNodeNames.CODE_QUALITY_CHECK, CodeQualityCheckNode.create(codeQualityCheckService))
                     .addNode(WorkflowNodeNames.PROJECT_BUILDER, ProjectBuilderNode.create(vueProjectBuilder))

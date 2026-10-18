@@ -29,6 +29,8 @@ import java.util.List;
  * @param caseFailures 用例级断言的失败描述
  * @param durationMs   本次生成耗时
  * @param error        生成阶段的异常信息
+ * @param routingDegraded     路由是否降级（主模型被限流/超时，由备用模型或默认值接手）
+ * @param routingDegradeReason 降级原因
  * @author <a>程序员haoy</a>
  */
 public record CaseResult(
@@ -39,12 +41,22 @@ public record CaseResult(
         List<CheckResult> checks,
         List<String> caseFailures,
         long durationMs,
-        String error
+        String error,
+        boolean routingDegraded,
+        String routingDegradeReason
 ) {
 
     public CaseResult {
         checks = checks == null ? List.of() : List.copyOf(checks);
         caseFailures = caseFailures == null ? List.of() : List.copyOf(caseFailures);
+    }
+
+    /**
+     * 兼容旧调用（未降级的用例）
+     */
+    public CaseResult(String caseId, CodeGenTypeEnum expectedType, CodeGenTypeEnum actualType, Path artifactDir,
+                      List<CheckResult> checks, List<String> caseFailures, long durationMs, String error) {
+        this(caseId, expectedType, actualType, artifactDir, checks, caseFailures, durationMs, error, false, null);
     }
 
     /**
@@ -55,6 +67,18 @@ public record CaseResult(
      */
     public boolean routingCorrect() {
         return expectedType != null && expectedType == actualType;
+    }
+
+    /**
+     * 真正「模型判错了」的用例：路由结果不对，且不是降级造成的
+     * <p>
+     * 为什么降级要单独统计（而不是笼统算作路由错）：降级时 {@link #routingCorrect()} 往往是 false，
+     * 但那是「模型没跑成」，不是「模型判错了」。实测第一轮基线就撞上这件事 ——
+     * 3 条用例里 2 条被 429 打成 HTML，路由准确率显示 33%，看上去像模型很笨，
+     * 实际上它一次都没机会回答。混在一起统计，这个指标在限流的日子就完全没用。
+     */
+    public boolean routingMisjudged() {
+        return !routingDegraded && !routingCorrect();
     }
 
     /**

@@ -39,11 +39,17 @@ public interface CodeGenerator {
      * <b>为什么失败用字段而不是抛异常？</b>因为评估要的是「这一轮 24 条里几条成功」，
      * 一条炸了不该让整轮中断 —— 那会让你丢掉另外 23 条已经花掉的钱和时间。
      *
-     * @param actualType  AI 实际判定的生成类型；路由失败时为 null
-     * @param artifactDir 产物根目录；失败时为 null
-     * @param error       失败原因；成功时为 null
+     * @param actualType          AI 实际判定的生成类型；路由失败时为 null
+     * @param artifactDir         产物根目录；失败时为 null
+     * @param error               失败原因；成功时为 null
+     * @param routingDegraded     路由是否降级（主模型失败、由备用模型或默认值接手）
+     * @param routingDegradeReason 降级原因；未降级时为 null
      */
-    record Generated(CodeGenTypeEnum actualType, Path artifactDir, String error) {
+    record Generated(CodeGenTypeEnum actualType,
+                     Path artifactDir,
+                     String error,
+                     boolean routingDegraded,
+                     String routingDegradeReason) {
 
         /**
          * 生成成功且拿到了产物目录
@@ -53,11 +59,16 @@ public interface CodeGenerator {
         }
 
         public static Generated ok(CodeGenTypeEnum actualType, Path artifactDir) {
-            return new Generated(actualType, artifactDir, null);
+            return new Generated(actualType, artifactDir, null, false, null);
+        }
+
+        public static Generated ok(CodeGenTypeEnum actualType, Path artifactDir,
+                                   boolean routingDegraded, String routingDegradeReason) {
+            return new Generated(actualType, artifactDir, null, routingDegraded, routingDegradeReason);
         }
 
         public static Generated failed(String error) {
-            return new Generated(null, null, error);
+            return new Generated(null, null, error, false, null);
         }
     }
 }

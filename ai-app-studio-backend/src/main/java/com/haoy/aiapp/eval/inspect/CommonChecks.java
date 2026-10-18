@@ -67,8 +67,26 @@ public final class CommonChecks {
 
     private static final Pattern BROKEN_VALUE = Pattern.compile(">\\s*(undefined|null|NaN)\\s*<");
 
+    /**
+     * 占位图服务的域名
+     * <p>
+     * 这一条<b>刻意保持软检查</b>：用了占位图，页面照样能打开、能看，它不是「坏」。
+     * 但它是一个<b>信号</b>——说明图片收集环节没起作用（或者 AI 偷懒），
+     * 而「素材是不是真的」恰好是这个项目和别的 AI 建站工具拉开差距的地方。
+     * <p>
+     * 收录标准：专门用来「假装有图」的服务。{@code source.unsplash.com/random} 也算，
+     * 它虽然链到真实照片，但内容是随机的，跟需求无关。
+     */
     private static final Pattern PLACEHOLDER_SERVICE = Pattern.compile(
-            "via\\.placeholder\\.com|placehold\\.co|picsum\\.photos|dummyimage\\.com|lorempixel\\.com",
+            "via\\.placeholder\\.com|placehold\\.co|picsum\\.photos|dummyimage\\.com|lorempixel\\.com"
+                    + "|placekitten\\.com|loremflickr\\.com|fakeimg\\.pl|source\\.unsplash\\.com/random",
+            Pattern.CASE_INSENSITIVE);
+
+    /**
+     * 任何图片引用（用来判断「是不是整页都用占位图」）
+     */
+    private static final Pattern ANY_IMAGE = Pattern.compile(
+            "<img\\b[^>]*\\bsrc\\s*=\\s*[\"']([^\"']+)[\"']|url\\(\\s*[\"']?([^\"')]+)[\"']?\\s*\\)",
             Pattern.CASE_INSENSITIVE);
 
     private CommonChecks() {
@@ -166,6 +184,11 @@ public final class CommonChecks {
 
     /**
      * 占位图服务检查（软）
+     * <p>
+     * <b>为什么要数「一共几张图、其中几处是占位图」</b>，而不是只说「引用了 picsum.photos」：
+     * 「引用了 picsum」和「整页 8 张图全是 picsum」是两种完全不同的问题。
+     * 前者可能只是随手放了个头像占位，后者说明<b>图片收集环节整个没生效</b> ——
+     * 而后者才是这个项目要盯的东西。只报域名的话，看报告的人得自己去翻代码才能分辨。
      */
     private record NoPlaceholderService() implements ArtifactCheck {
 
@@ -181,16 +204,44 @@ public final class CommonChecks {
                 return CheckResult.skip(name(), "没有可检查的文件");
             }
             List<String> hits = new ArrayList<>();
+            int placeholderCount = 0;
+            int imageCount = 0;
             for (Path file : files) {
-                Matcher matcher = PLACEHOLDER_SERVICE.matcher(ArtifactFiles.read(file));
-                if (matcher.find()) {
-                    hits.add(ArtifactFiles.relative(root, file) + " 引用了 " + matcher.group());
+                String content = ArtifactFiles.read(file);
+                String rel = ArtifactFiles.relative(root, file);
+
+                int refs = countMatches(ANY_IMAGE, content);
+                imageCount += refs;
+
+                Matcher matcher = PLACEHOLDER_SERVICE.matcher(content);
+                int local = 0;
+                while (matcher.find()) {
+                    local++;
+                    placeholderCount++;
+                }
+                if (local > 0) {
+                    hits.add(rel + " 有 " + local + " 处");
                 }
             }
             if (hits.isEmpty()) {
                 return CheckResult.pass(name(), "未使用占位图服务");
             }
-            return CheckResult.warn(name(), summarize(hits));
+            String detail = summarize(hits);
+            if (imageCount > 0 && placeholderCount >= imageCount) {
+                // 所有图片都是占位图：不是「顺手放了个占位」，是素材链路整个没跑到
+                return CheckResult.warn(name(), "全部 " + imageCount + " 处图片都是占位图，图片收集环节可能没生效（"
+                        + detail + "）");
+            }
+            return CheckResult.warn(name(), "共 " + placeholderCount + " 处占位图（" + detail + "）");
+        }
+
+        private int countMatches(Pattern pattern, String content) {
+            Matcher matcher = pattern.matcher(content);
+            int count = 0;
+            while (matcher.find()) {
+                count++;
+            }
+            return count;
         }
     }
 

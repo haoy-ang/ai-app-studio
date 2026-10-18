@@ -116,6 +116,25 @@ public class WorkflowContext implements Serializable {
     private CodeGenTypeEnum generationType;
 
     /**
+     * 路由是否降级了
+     * <p>
+     * <b>这个字段存在的理由，是把「路由判断错了」和「路由根本没跑成」分开。</b>
+     * 两者都会让产物类型不符合需求，但原因完全不同：
+     * <ul>
+     *   <li>判断错 —— 是提示词 / 模型能力问题，该改提示词；</li>
+     *   <li>降级 —— 是上游 429 / 超时，模型压根没机会判断，改提示词毫无意义。</li>
+     * </ul>
+     * 混在一起统计，会让「路由准确率」这个指标在限流的日子里毫无参考价值 ——
+     * 真实测出来的就是这件事：三条用例里两条被 429 打成 HTML，看上去像模型很差。
+     */
+    private Boolean routingDegraded;
+
+    /**
+     * 降级原因（上游异常的一句话摘要），只在 {@link #routingDegraded} 为 true 时有值
+     */
+    private String routingDegradeReason;
+
+    /**
      * 生成的代码目录
      */
     private String generatedCodeDir;
