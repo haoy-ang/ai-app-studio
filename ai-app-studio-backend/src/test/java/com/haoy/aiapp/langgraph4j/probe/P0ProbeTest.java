@@ -15,6 +15,7 @@ import dev.langchain4j.service.SystemMessage;
 import dev.langchain4j.service.UserMessage;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -34,11 +35,20 @@ import java.util.regex.Pattern;
  *   <li>{@link #probe3_structuredNestedRecord()} —— 结构化输出返回带嵌套 record 的 POJO 能否成功</li>
  *   <li>{@link #probe4_undrawDynamicBuildId()} —— unDraw 动态 buildId 方案在 Java 侧是否可行</li>
  * </ol>
- * 本类属于「一次性探针」，P0 验证结束后可以删除，也可以留着当回归用。
+ * 本类属于「一次性探针」：它<b>没有任何断言</b>，异常全被吞成一行日志，所以永远绿 ——
+ * 它只承担「当时实测结论的存档」职责，不能当回归用。
+ * <p>
+ * 之所以打 {@code requires-ai} 标签：探针 1/2/2b/3 会真实调用大模型，4/5 会真实访问外网。
+ * 留在默认的 {@code mvn test} 里，等于每次跑单测都花一次钱，而且离线环境必红。
+ * 要复跑就显式指定：
+ * <pre>
+ *   mvn test -Dtest=P0ProbeTest -Dtest.groups=requires-ai
+ * </pre>
  *
  * @author <a>程序员haoy</a>
  */
 @Slf4j
+@Tag("requires-ai")
 @SpringBootTest
 class P0ProbeTest {
 
