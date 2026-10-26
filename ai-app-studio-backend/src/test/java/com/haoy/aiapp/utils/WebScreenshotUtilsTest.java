@@ -6,6 +6,7 @@ import com.haoy.aiapp.manager.ScreenshotManager;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 
@@ -18,10 +19,14 @@ import java.util.concurrent.CompletableFuture;
  * <p>
  * 注意：会真实启动无头 Chrome 并访问外网，首次运行 WebDriverManager 需要联网下载 chromedriver。
  * 本类同时覆盖三件事：截图能跑通、并发不串页、临时目录能清理。
+ * <p>
+ * 因为依赖「本机有浏览器 + 能上外网」，这里单独打上 {@code requires-browser} 标签，
+ * CI 用 {@code -Dtest.excluded.groups=requires-browser} 排除；本地默认仍然会跑。
  *
  * @author <a>程序员haoy</a>
  */
 @Slf4j
+@Tag("requires-browser")
 @SpringBootTest
 class WebScreenshotUtilsTest {
 

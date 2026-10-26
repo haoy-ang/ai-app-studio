@@ -41,6 +41,11 @@
 		    mvn test -Dtest.groups=                   什么都不排除
 		-->
 		<test.groups>!requires-ai</test.groups>
+		<!--
+		  额外排除一档「需要真实浏览器」的用例：会启动无头 Chrome 访问外网
+		  （WebScreenshotUtilsTest）。本地想跑就留空，CI 里传 -Dtest.excluded.groups=requires-browser。
+		-->
+		<test.excluded.groups></test.excluded.groups>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -189,6 +194,7 @@
 				<artifactId>maven-surefire-plugin</artifactId>
 				<configuration>
 					<groups>${test.groups}</groups>
+					<excludedGroups>${test.excluded.groups}</excludedGroups>
 				</configuration>
 			</plugin>
 			<plugin>

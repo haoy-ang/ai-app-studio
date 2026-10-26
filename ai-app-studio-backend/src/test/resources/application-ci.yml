@@ -1,0 +1,65 @@
+# ============================================================
+# CI 专用配置（GitHub Actions 用 -Dspring.profiles.active=ci 激活）
+#
+# 为什么需要它：main 里的 application.yml 只写了「本地默认值」，
+# 真正的密钥在 application-local.yml（已 gitignore，CI 里不存在）。
+# 而 CosClientConfig / 模型配置都在启动时就要构造 Bean，
+# 少一个字段就可能在 context 加载阶段直接炸 —— 所以这里给全套假值，
+# 保证「不需要真实外呼」的确定性测试能跑完。
+#
+# ⚠️ 这里的所有值都是假的，任何用例都不该真的拿它们去调外部服务。
+# ============================================================
+
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://127.0.0.1:3306/ai_app_studio?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    username: root
+    password: 123456
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      password:
+
+# 对象存储：只在「上传头像 / 封面」时才真的用它，测试里不会外呼，
+# 但 Bean 在启动时就要 new，缺 region 会直接抛异常。
+cos:
+  client:
+    host: https://ci-dummy.cos.ap-shanghai.myqcloud.com
+    secretId: ci-dummy-secret-id
+    secretKey: ci-dummy-secret-key
+    region: ap-shanghai
+    bucket: ci-dummy-1000000000
+
+# 模型：三个入口都补上假 key，避免 starter 在启动时因为 api-key 为空而失败。
+langchain4j:
+  open-ai:
+    chat-model:
+      api-key: ci-dummy-key
+      base-url: https://api.deepseek.com
+      model-name: deepseek-chat
+    streaming-chat-model:
+      api-key: ci-dummy-key
+      base-url: https://api.deepseek.com
+      model-name: deepseek-chat
+    routing-chat-model:
+      api-key: ci-dummy-key
+      base-url: https://api.deepseek.com
+      model-name: deepseek-chat
+
+# 产物目录：别写到项目里，CI 的 workspace 是只读语义上的"干净"，
+# 用临时目录保证每次跑都是全新状态。
+# ⚠️ enabled 必须保持 true：版本快照相关用例真的会调 snapshot()，
+# 关掉开关它们只会静默什么都不做，然后断言失败 —— 排查起来非常费劲。
+app:
+  deploy:
+    root-dir: ${java.io.tmpdir}/ai-app-studio-ci/deploy
+    host: http://localhost:8080
+  version:
+    enabled: true
+    root-dir: ${java.io.tmpdir}/ai-app-studio-ci/versions
+
+# 限流在测试里关掉：所有请求都来自 127.0.0.1，共用一把令牌桶会自己把自己限死。
+ratelimit:
+  enabled: false

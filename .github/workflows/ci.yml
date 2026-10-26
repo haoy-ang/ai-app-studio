@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 同一个分支连推多次时，只保留最新一次，省 runner 也省等待
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ==================== 后端：编译 + 确定性单测 ====================
+  backend:
+    name: 后端测试（Java 21）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: 123456
+          MYSQL_DATABASE: ai_app_studio
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -p123456"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备 JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: ai-app-studio-backend/pom.xml
+
+      # 表结构是「真库测试」的前提（用户/应用/对话/版本都会真的读写）。
+      # 优先用 runner 自带的 mysql 客户端；没有就通过 docker exec 进服务容器执行。
+      - name: 初始化数据库
+        run: |
+          set -e
+          SQL=ai-app-studio-backend/sql/create_table.sql
+          if command -v mysql >/dev/null 2>&1; then
+            mysql -h 127.0.0.1 -P 3306 -uroot -p123456 < "$SQL"
+          else
+            CID=$(docker ps -q --filter ancestor=mysql:8.0 | head -n1)
+            test -n "$CID" || { echo "找不到 mysql 服务容器"; exit 1; }
+            docker exec -i "$CID" mysql -uroot -p123456 < "$SQL"
+          fi
+          echo "表结构初始化完成"
+
+      # test.groups 默认 !requires-ai（不花钱、不依赖模型）；
+      # test.excluded.groups 再排除需要真浏览器的截图用例。
+      - name: mvn test
+        working-directory: ai-app-studio-backend
+        run: mvn -B test -Dspring.profiles.active=ci -Dtest.excluded.groups=requires-browser
+
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-surefire-reports
+          path: |
+            ai-app-studio-backend/target/surefire-reports
+            ai-app-studio-backend/target/site/jacoco
+          retention-days: 7
+
+  # ==================== 前端：类型检查 + Lint + 构建 ====================
+  frontend:
+    name: 前端检查（Node 22）
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备 Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ai-app-studio-frontend/package-lock.json
+
+      - name: 安装依赖
+        working-directory: ai-app-studio-frontend
+        run: npm ci
+
+      - name: 类型检查
+        working-directory: ai-app-studio-frontend
+        run: npm run type-check
+
+      - name: ESLint
+        working-directory: ai-app-studio-frontend
+        run: npx eslint .
+
+      - name: 生产构建
+        working-directory: ai-app-studio-frontend
+        run: npm run pure-build
