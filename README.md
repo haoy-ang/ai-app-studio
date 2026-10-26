@@ -37,6 +37,16 @@
 - **版本快照与一键回滚** —— 每次生成打一个快照，可回滚到任意历史版本，回滚不丢 `node_modules`
 - **AI 工作流编排** —— 用 LangGraph4j 把「素材收集 → 提示词增强 → 类型路由 → 代码生成 → 质量校验 → 工程构建」串成可编排的状态图
 
+## 界面预览
+
+| 首页：一句话创建应用 | 对话生成 + 实时预览 |
+|---|---|
+| ![首页](docs/screenshots/home.png) | ![对话生成](docs/screenshots/chat.png) |
+
+| 我的作品：搜索 / 筛选 / 排序 / 版本 | 登录 |
+|---|---|
+| ![我的作品](docs/screenshots/my-apps.png) | ![登录](docs/screenshots/login.png) |
+
 ## 技术栈
 
 | 层次 | 技术选型 |
@@ -199,6 +209,7 @@ nginx.exe
 │       └── stores/                    # Pinia 状态
 ├── .github/workflows/ci.yml          # CI：后端测试 + 前端检查
 ├── docker-compose.yml                # 一键启动
+├── docs/screenshots/                 # README 用的界面截图
 └── architecture.png
 ```
 
@@ -206,7 +217,7 @@ nginx.exe
 
 | 指标 | 现状 |
 |---|---|
-| 后端用例 | **176 个**（默认档 0 失败），JaCoCo 指令覆盖率 **63.2%** |
+| 后端用例 | **176 个**（CI 跑 173 个：再排除需要真实浏览器与真实大模型的用例），JaCoCo 指令覆盖率 **63.2%** |
 | 测试分档 | `requires-ai`（真实调模型）与 `requires-browser`（真浏览器）都被单独隔离，`mvn test` 默认秒级、免费 |
 | 前端 | `vue-tsc` 类型检查 + ESLint + 生产构建，CI 全绿 |
 | CI | 每次 push / PR 自动跑：MySQL + Redis 服务容器、建表、后端测试、前端类型检查、Lint、构建 |
@@ -216,6 +227,7 @@ nginx.exe
 ## 已知限制
 
 - **部署依赖宿主机 Nginx**，容器版只负责生成 / 预览 / 版本管理
+- **Docker Compose 没有进 CI**（CI 只验证构建与测试），首次 `up` 如遇镜像拉取或端口冲突，按日志调整即可
 - **前端暂无单元测试**，靠类型检查 + ESLint + 构建兜底
 - 对话历史的游标分页以 `id` 为准；更早的实现用秒级 `createTime`，同秒消息会漏翻页（已修）
 - 应用创建时路由一次生成类型后写死，中途换需求不会重新判定
