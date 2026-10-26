@@ -57,9 +57,16 @@
 <script setup lang="ts">
 import { reactive, ref, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
+import type { UploadProps } from 'ant-design-vue'
 import { useLoginUserStore } from '@/stores/loginUser'
 import { updateMyProfile, uploadAvatar } from '@/api/userController'
 import defaultAvatar from '@/assets/defaultAvatar.png'
+
+/**
+ * Ant Design Vue 不会把 customRequest 的参数类型导出成公开名字，
+ * 这里从组件 props 上反推，避免再出现 `any`（升级组件库时类型也会跟着变）。
+ */
+type UploadRequestOption = Parameters<NonNullable<UploadProps['customRequest']>>[0]
 
 const loginUserStore = useLoginUserStore()
 
@@ -103,7 +110,7 @@ const beforeAvatarUpload = (file: File) => {
  * 自定义上传：走我们的 /user/avatar/upload，拿到 URL 后先填进表单，不立即落库。
  * 这样"传了头像但最后点了取消"不会在库里留下已经改掉的字段。
  */
-const handleAvatarUpload = async (options: any) => {
+const handleAvatarUpload = async (options: UploadRequestOption) => {
   uploading.value = true
   try {
     const res = await uploadAvatar(options.file as File)
