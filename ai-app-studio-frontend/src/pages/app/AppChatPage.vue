@@ -227,7 +227,6 @@ import {
   deployApp as deployAppApi,
   deleteApp as deleteAppApi,
 } from '@/api/appController'
-import { listAppChatHistory } from '@/api/chatHistoryController'
 import { CodeGenTypeEnum, formatCodeGenType } from '@/utils/codeGenTypes'
 import request from '@/request'
 
@@ -236,8 +235,11 @@ import AppDetailModal from '@/components/AppDetailModal.vue'
 import DeploySuccessModal from '@/components/DeploySuccessModal.vue'
 import aiAvatar from '@/assets/aiAvatar.png'
 import defaultAvatar from '@/assets/defaultAvatar.png'
-import { API_BASE_URL, getStaticPreviewUrl } from '@/config/env'
+import { getStaticPreviewUrl } from '@/config/env'
 import { VisualEditor, type ElementInfo } from '@/utils/visualEditor'
+import { useChatHistory } from '@/composables/useChatHistory'
+import { useCodeStream } from '@/composables/useCodeStream'
+import type { ChatMessage } from '@/types/chat'
 
 import {
   CloudUploadOutlined,
@@ -254,40 +256,22 @@ const loginUserStore = useLoginUserStore()
 
 // 应用信息
 const appInfo = ref<API.AppVO>()
-const appId = ref<any>()
+const appId = ref<API.SnowflakeId>()
 
 // 对话相关
-interface Message {
-  type: 'user' | 'ai'
-  content: string
-  loading?: boolean
-  /**
-   * 是否正在流式接收中。
-   * true → 只渲染纯文本（跳过 markdown 解析与代码高亮，避免 O(n²) 卡顿）；
-   * 生成结束后置为 false，整体渲染一次 markdown。
-   */
-  streaming?: boolean
-  createTime?: string
-}
-
-const messages = ref<Message[]>([])
+const messages = ref<ChatMessage[]>([])
 const userInput = ref('')
-const isGenerating = ref(false)
 const messagesContainer = ref<HTMLElement>()
 
-// 当前活跃的 SSE 连接。
-// ⚠️ 必须挂在组件作用域上而不是 generateCode 的局部变量里：
-// 否则组件卸载时拿不到引用、关不掉连接 —— 用户生成到一半切走页面，后端会继续烧 token。
-let activeEventSource: EventSource | null = null
-
-// 对话历史相关
-const loadingHistory = ref(false)
-const hasMoreHistory = ref(false)
-// 游标：上一页最后一条消息的 id。
-// 用 id（雪花号，唯一且递增）而不是 createTime（精度只到秒）；
-// 用户消息和 AI 消息经常落在同一秒，用时间做游标会把同秒的记录整批跳过，翻历史会"丢一段"。
-const lastMessageId = ref<API.SnowflakeId>()
-const historyLoaded = ref(false)
+// 历史加载（游标分页）和流式生成（SSE）都抽成 composable：
+// 页面只负责「消息怎么展示、什么时候刷新预览」，不再背 SSE 的收尾细节。
+const { loadingHistory, hasMoreHistory, historyLoaded, loadChatHistory, loadMoreHistory } =
+  useChatHistory(appId, messages)
+const { isGenerating, generateCode, stopGenerating, closeStream } = useCodeStream({
+  appId,
+  messages,
+  onFinished: handleStreamFinished,
+})
 
 // 预览相关
 const previewUrl = ref('')
@@ -325,60 +309,6 @@ const appDetailVisible = ref(false)
 // 显示应用详情
 const showAppDetail = () => {
   appDetailVisible.value = true
-}
-
-// 加载对话历史
-const loadChatHistory = async (isLoadMore = false) => {
-  if (!appId.value || loadingHistory.value) return
-  loadingHistory.value = true
-  try {
-    const params: API.listAppChatHistoryParams = {
-      appId: appId.value,
-      pageSize: 10,
-    }
-    // 如果是加载更多，传递上一页最后一条消息的 id 作为游标
-    if (isLoadMore && lastMessageId.value) {
-      params.lastId = lastMessageId.value
-    }
-    const res = await listAppChatHistory(params)
-    if (res.data.code === 0 && res.data.data) {
-      const chatHistories = res.data.data.records || []
-      if (chatHistories.length > 0) {
-        // 将对话历史转换为消息格式，并按时间正序排列（老消息在前）
-        const historyMessages: Message[] = chatHistories
-            .map((chat) => ({
-              type: (chat.messageType === 'user' ? 'user' : 'ai') as 'user' | 'ai',
-              content: chat.message || '',
-              createTime: chat.createTime,
-            }))
-            .reverse() // 反转数组，让老消息在前
-        if (isLoadMore) {
-          // 加载更多时，将历史消息添加到开头
-          messages.value.unshift(...historyMessages)
-        } else {
-          // 初始加载，直接设置消息列表
-          messages.value = historyMessages
-        }
-        // 更新游标：records 是按时间降序的，最后一条就是本页最老的一条
-        lastMessageId.value = chatHistories[chatHistories.length - 1]?.id
-        // 检查是否还有更多历史
-        hasMoreHistory.value = chatHistories.length === 10
-      } else {
-        hasMoreHistory.value = false
-      }
-      historyLoaded.value = true
-    }
-  } catch (error) {
-    console.error('加载对话历史失败：', error)
-    message.error('加载对话历史失败')
-  } finally {
-    loadingHistory.value = false
-  }
-}
-
-// 加载更多历史消息
-const loadMoreHistory = async () => {
-  await loadChatHistory(true)
 }
 
 // 获取应用信息
@@ -524,182 +454,21 @@ const sendMessage = async () => {
   await generateCode(message, aiMessageIndex)
 }
 
-// 关闭当前 SSE 连接（幂等）
-const closeStream = () => {
-  activeEventSource?.close()
-  activeEventSource = null
-}
-
-// 生成代码 - 使用 EventSource 处理流式响应
-const generateCode = async (userMessage: string, aiMessageIndex: number) => {
-  let streamCompleted = false
-  // 流式内容缓冲区 + rAF 句柄。
-  // 为什么要缓冲：SSE 可能在一帧内推来多个 chunk，每个都直接写回响应式数据会触发多次
-  // 组件更新 + 多次滚动计算；攒到下一帧统一刷一次，重排次数从"每 chunk 一次"降到"每帧一次"。
-  let pendingContent = ''
-  let rafId = 0
-
-  const flushContent = () => {
-    rafId = 0
-    const target = messages.value[aiMessageIndex]
-    if (target) {
-      target.content = pendingContent
-    }
-  }
-
-  // 流结束的统一收尾：无论正常 done 还是连接被判定为正常关闭，都走这里
-  const finishStream = () => {
-    if (streamCompleted) return
-    streamCompleted = true
-    // ⚠️ 收尾前必须把缓冲区刷干净并取消待执行的 rAF，否则最后几个 chunk 会丢
-    if (rafId) {
-      cancelAnimationFrame(rafId)
-      flushContent()
-    }
-    isGenerating.value = false
-    closeStream()
-    // 流已结束 → 退出"纯文本模式"，让这一条消息走一次完整的 markdown 渲染
-    const target = messages.value[aiMessageIndex]
-    if (target) {
-      target.streaming = false
-      target.loading = false
-    }
-    scrollToBottom()
-    // 延迟刷新应用信息，确保后端已把 AI 回复落库
-    setTimeout(async () => {
-      await refreshAppInfoOnly()
-      if (appInfo.value?.codeReady) {
-        updatePreview()
-      }
-    }, 1000)
-  }
-
-  try {
-    // 获取 axios 配置的 baseURL
-    const baseURL = request.defaults.baseURL || API_BASE_URL
-
-    // 构建URL参数
-    const params = new URLSearchParams({
-      appId: appId.value || '',
-      message: userMessage,
-    })
-
-    const url = `${baseURL}/app/chat/gen/code?${params}`
-
-    // 创建 EventSource 连接
-    activeEventSource = new EventSource(url, {
-      withCredentials: true,
-    })
-
-    // 处理接收到的消息
-    activeEventSource.onmessage = function (event) {
-      if (streamCompleted) return
-
-      try {
-        // 解析JSON包装的数据
-        const parsed = JSON.parse(event.data)
-        const content = parsed.d
-
-        // 拼接内容（只进缓冲区，不直接写响应式数据）
-        if (content !== undefined && content !== null) {
-          pendingContent += content
-          const target = messages.value[aiMessageIndex]
-          if (target && target.loading) {
-            target.loading = false
-          }
-          if (!rafId) {
-            rafId = requestAnimationFrame(flushContent)
-          }
-        }
-      } catch (error) {
-        console.error('解析消息失败:', error)
-        handleError(error, aiMessageIndex)
-      }
-    }
-
-    // 处理done事件
-    activeEventSource.addEventListener('done', function () {
-      finishStream()
-    })
-
-    // 处理business-error事件（后端限流等错误）
-    activeEventSource.addEventListener('business-error', function (event: MessageEvent) {
-      if (streamCompleted) return
-
-      try {
-        const errorData = JSON.parse(event.data)
-        console.error('SSE业务错误事件:', errorData)
-
-        // 显示具体的错误信息
-        const errorMessage = errorData.message || '生成过程中出现错误'
-        const target = messages.value[aiMessageIndex]
-        if (target) {
-          target.content = `❌ ${errorMessage}`
-          target.loading = false
-          target.streaming = false
-        }
-        message.error(errorMessage)
-
-        streamCompleted = true
-        isGenerating.value = false
-        closeStream()
-      } catch (parseError) {
-        console.error('解析错误事件失败:', parseError, '原始数据:', event.data)
-        handleError(new Error('服务器返回错误'), aiMessageIndex)
-      }
-    })
-
-    // 处理错误
-    activeEventSource.onerror = function () {
-      if (streamCompleted || !isGenerating.value) return
-      // 服务端在推送完 done 之后关闭连接，浏览器会报一次连接错误并自动重连；
-      // 走到这里如果 already 是 CONNECTING，说明是这种"正常关闭"，按成功收尾即可
-      if (activeEventSource?.readyState === EventSource.CONNECTING) {
-        finishStream()
-      } else {
-        handleError(new Error('SSE连接错误'), aiMessageIndex)
-      }
-    }
-  } catch (error) {
-    console.error('创建 EventSource 失败：', error)
-    handleError(error, aiMessageIndex)
-  }
-}
-
 /**
- * 停止生成 —— 准确说是「停止接收生成结果」
+ * 流正常结束后的收尾：滚动到底、延迟刷新应用信息、按需更新预览。
  * <p>
- * ⚠️ 服务端不一定真的停下：Vue 工程模式用的是阻塞式 tokenStream.start()，
- * 客户端断开只会让后续 push 失效，模型仍会跑到结束并把文件写完；
- * HTML / 多文件模式的流式请求更可能被真正中断。这一点要在文案上如实告诉用户，
- * 别让人以为"点了停止 = 不烧 token 了"。
+ * 延迟 1 秒是因为后端要先把 AI 回复落库，刷新太早会拿到旧状态。
+ * 抽成函数声明（而不是 const 箭头函数）是为了让上面的 useCodeStream
+ * 在 setup 阶段就能拿到引用 —— 函数声明会提升，箭头函数会撞 TDZ。
  */
-const stopGenerating = () => {
-  closeStream()
-  isGenerating.value = false
-  const target = messages.value[messages.value.length - 1]
-  if (target && target.type === 'ai') {
-    target.loading = false
-    target.streaming = false
-    target.content = target.content
-        ? `${target.content}\n\n_（已停止接收生成结果，服务端可能仍在继续）_`
-        : '（已停止生成）'
-  }
-  message.info('已停止接收生成结果')
-}
-
-// 错误处理函数
-const handleError = (error: unknown, aiMessageIndex: number) => {
-  console.error('生成代码失败：', error)
-  const target = messages.value[aiMessageIndex]
-  if (target) {
-    target.content = '抱歉，生成过程中出现了错误，请重试。'
-    target.loading = false
-    target.streaming = false
-  }
-  message.error('生成失败，请重试')
-  isGenerating.value = false
-  closeStream()
+function handleStreamFinished() {
+  scrollToBottom()
+  setTimeout(async () => {
+    await refreshAppInfoOnly()
+    if (appInfo.value?.codeReady) {
+      updatePreview()
+    }
+  }, 1000)
 }
 
 // 更新预览
