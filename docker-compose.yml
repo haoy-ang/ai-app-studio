@@ -1,0 +1,101 @@
+# ============================================================
+# 一键起：MySQL + Redis + 后端 + 前端
+#
+#   cp .env.example .env      # 填 DEEPSEEK_API_KEY
+#   docker compose up -d --build
+#   前端   http://localhost:8088
+#   接口   http://localhost:8123/api/doc.html
+#
+# 说明：
+#   - MySQL / Redis 不对宿主机暴露端口，避免和本机已装的 3306 / 6379 打架；
+#     需要连库用 `docker compose exec mysql mysql -uroot -p`。
+#   - 首次启动会自动执行 ai-app-studio-backend/sql/create_table.sql 建表。
+#   - 「部署到 Nginx」这一步仍然走宿主机 Nginx（8080），因为部署目录要长期保留、
+#     且截图需要容器访问到它；容器版只负责生成 / 预览 / 版本管理。详见 README。
+# ============================================================
+name: ai-app-studio
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: aiapp-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
+      MYSQL_DATABASE: ai_app_studio
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+      # 目录里的 *.sql 会在「数据目录首次初始化」时按文件名顺序执行
+      - ./ai-app-studio-backend/sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: aiapp-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    build:
+      context: ./ai-app-studio-backend
+    container_name: aiapp-backend
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      ROUTING_API_KEY: ${ROUTING_API_KEY:-}
+      COS_HOST: ${COS_HOST:-}
+      COS_SECRET_ID: ${COS_SECRET_ID:-}
+      COS_SECRET_KEY: ${COS_SECRET_KEY:-}
+      COS_REGION: ${COS_REGION:-ap-shanghai}
+      COS_BUCKET: ${COS_BUCKET:-}
+      APP_DEPLOY_HOST: ${APP_DEPLOY_HOST:-http://localhost:8080}
+      TZ: Asia/Shanghai
+    ports:
+      - "8123:8123"
+    volumes:
+      # 生成产物（tmp/code_output）和部署产物都挂在宿主机，容器重建不丢
+      - ./data/code_output:/app/tmp/code_output
+      - ./data/deploy:/data/deploy
+      - ./data/versions:/data/versions
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # 命中后端的 /api/health/（见 HealthController）
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8123/api/health/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ./ai-app-studio-frontend
+      args:
+        VITE_DEPLOY_DOMAIN: ${APP_DEPLOY_HOST:-http://localhost:8080}
+    container_name: aiapp-frontend
+    # 80 被 IIS 占着、8080 留给部署用的 Nginx，所以前端用 8088
+    ports:
+      - "8088:80"
+    depends_on:
+      backend:
+        condition: service_started

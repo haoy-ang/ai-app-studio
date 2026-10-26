@@ -28,6 +28,8 @@ application-dev.yml
 tmp/
 code_output/
 code_deploy/
+# docker compose 的持久化目录（MySQL 数据 / Redis AOF / 生成产物 / 部署产物）
+data/
 
 # ============================================================
 # AI 协作工作区（本地记忆与方案，不属于项目源码）

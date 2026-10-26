@@ -1,0 +1,6 @@
+target/
+tmp/
+.git/
+.gitignore
+*.log
+.idea/
